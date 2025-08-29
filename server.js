@@ -1,3 +1,27 @@
+// Rota raiz (/)
+app.get('/', (req, res) => {
+  res.send(`
+    <h1>🚀 API do Guia da Cidade</h1>
+    <p>Esta é a API REST do app de turismo da sua cidade.</p>
+    <h2>🔗 Endpoints disponíveis:</h2>
+    <ul>
+      <li><a href="/api/pontos-turisticos">GET /api/pontos-turisticos</a></li>
+      <li>POST /api/pontos-turisticos</li>
+      <li>PUT /api/pontos-turisticos/:id</li>
+      <li>DELETE /api/pontos-turisticos/:id</li>
+      <li><a href="/api/restaurantes">GET /api/restaurantes</a></li>
+      <li>POST /api/restaurantes</li>
+      <li>PUT /api/restaurantes/:id</li>
+      <li>DELETE /api/restaurantes/:id</li>
+      <li><a href="/api/acomodacoes">GET /api/acomodacoes</a></li>
+      <li>POST /api/acomodacoes</li>
+      <li>PUT /api/acomodacoes/:id</li>
+      <li>DELETE /api/acomodacoes/:id</li>
+    </ul>
+    <p>📅 Criado em 2025</p>
+  `);
+});
+
 // server.js
 const express = require('express');
 const cors = require('cors');
