@@ -3,10 +3,11 @@ const express = require('express');
 const cors = require('cors');
 const { initializeApp, getApps } = require('firebase/app');
 const { getFirestore, collection, getDocs, addDoc, doc, deleteDoc, updateDoc, getDoc } = require('firebase/firestore');
+require('dotenv').config(); // ✅ Carrega as variáveis de ambiente
 
 // 🔥 Firebase Admin SDK (para excluir do Storage)
 const admin = require('firebase-admin');
-const serviceAccount = require('./firebase-adminsdk.json'); // ✅ Caminho do arquivo
+const serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
 
 const app = express();
 
@@ -14,14 +15,14 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Configuração do Firebase
+// Configuração do Firebase (com variáveis de ambiente)
 const firebaseConfig = {
-  apiKey: "AIzaSyCcwZSN3U1tF1yAjeZy3ECGrV_BoFBV8mc",
-  authDomain: "turismo-app-fa581.firebaseapp.com",
-  projectId: "turismo-app-fa581",
-  storageBucket: "turismo-app-fa581.firebasestorage.app",
-  messagingSenderId: "117862345287",
-  appId: "1:117862345287:web:b6111e17ff92cbdc199f62"
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID
 };
 
 // Inicializa o Firebase Client (para GET/POST)

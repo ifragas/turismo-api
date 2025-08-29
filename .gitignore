@@ -104,5 +104,8 @@ public/
 .yarn/install-state.gz
 .pnp.*
 
+# Variáveis de ambiente
+.env
+
 # Firebase Admin SDK (nunca envie para o GitHub)
-firebase-adminsdk.json.json
+firebase-adminsdk.json
