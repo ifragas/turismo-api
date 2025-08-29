@@ -103,3 +103,6 @@ public/
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Firebase Admin SDK (nunca envie para o GitHub)
+firebase-adminsdk.json.json
