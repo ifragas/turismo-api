@@ -7,7 +7,8 @@ require('dotenv').config(); // ✅ Carrega as variáveis de ambiente
 
 // 🔥 Firebase Admin SDK (para excluir do Storage)
 const admin = require('firebase-admin');
-const serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+// ✅ Lê o JSON das variáveis de ambiente
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 
 const app = express();
 
