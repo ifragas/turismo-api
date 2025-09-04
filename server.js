@@ -540,6 +540,40 @@ app.post('/api/excluir-imagem', async (req, res) => {
   }
 });
 
+// POST /api/login
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // ✅ Valida campos obrigatórios
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Campos obrigatórios: e-mail e senha'
+      });
+    }
+
+    // ✅ Valida credenciais (exemplo simples)
+    const ADMIN_EMAIL = 'admin@cidade.com';
+    const ADMIN_PASSWORD = 'Senha123!'; // ✅ Use variáveis de ambiente em produção
+
+    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+      // ✅ Login bem-sucedido
+      res.status(200).json({
+        email,
+        message: 'Login realizado com sucesso!'
+      });
+    } else {
+      // ❌ Credenciais inválidas
+      res.status(401).json({
+        error: 'E-mail ou senha inválidos'
+      });
+    }
+  } catch (error) {
+    console.error('Erro no login:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
 
 // Inicia o servidor
 const PORT = process.env.PORT || 3000;
