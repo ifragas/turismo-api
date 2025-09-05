@@ -91,7 +91,7 @@ const authenticateToken = (req, res, next) => {
   next();
 };
 
-// LOGIN - Rota para autenticação
+// LOGIN - Rota para autenticação com Firebase Auth
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -102,19 +102,24 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // Em produção, conecte com Firebase Auth ou banco de dados
-    const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@cidade.com';
-    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Senha123!';
-
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      const token = 'token_valido_' + Date.now();
+    // Com esta configuração, QUALQUER usuário cadastrado no Firebase Auth pode fazer login
+    // O sistema verifica apenas se o usuário existe, não valida a senha diretamente aqui
+    try {
+      // Verifica se o usuário existe no Firebase Auth
+      const userRecord = await admin.auth().getUserByEmail(email);
+      
+      // Se chegou aqui, o usuário existe no Firebase
+      // Gera um token simples para autenticação nas outras rotas
+      const token = 'token_' + Date.now() + '_' + userRecord.uid;
       
       res.status(200).json({
         token,
-        email,
+        email: userRecord.email,
         message: 'Login realizado com sucesso!'
       });
-    } else {
+    } catch (firebaseError) {
+      // Usuário não encontrado no Firebase Auth
+      console.error('Erro Firebase Auth:', firebaseError.code, firebaseError.message);
       res.status(401).json({
         error: 'E-mail ou senha inválidos'
       });
