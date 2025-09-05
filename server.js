@@ -1,13 +1,11 @@
-// server.js
 const express = require('express');
 const cors = require('cors');
 const { initializeApp, getApps } = require('firebase/app');
 const { getFirestore, collection, getDocs, addDoc, doc, deleteDoc, updateDoc, getDoc } = require('firebase/firestore');
-require('dotenv').config(); // ✅ Carrega as variáveis de ambiente
+require('dotenv').config();
 
-// 🔥 Firebase Admin SDK (para excluir do Storage)
+// Firebase Admin SDK
 const admin = require('firebase-admin');
-// ✅ Lê o JSON das variáveis de ambiente
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 
 const app = express();
@@ -16,7 +14,7 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Configuração do Firebase (com variáveis de ambiente)
+// Configuração do Firebase
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY,
   authDomain: process.env.FIREBASE_AUTH_DOMAIN,
@@ -26,15 +24,15 @@ const firebaseConfig = {
   appId: process.env.FIREBASE_APP_ID
 };
 
-// Inicializa o Firebase Client (para GET/POST)
+// Inicializa o Firebase
 if (!getApps().length) initializeApp(firebaseConfig);
 const db = getFirestore();
 
-// Inicializa o Firebase Admin (para excluir do Storage)
+// Inicializa o Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount), // ✅ Usando certificado
-    storageBucket: "turismo-app-fa581.firebasestorage.app"
+    credential: admin.credential.cert(serviceAccount),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
   });
 }
 
@@ -43,10 +41,6 @@ const bucket = admin.storage().bucket();
 // Função para extrair caminho da URL do Storage
 const extractFilePath = (url) => {
   if (!url) return null;
-
-  // Exemplo de URL:
-  // https://firebasestorage.googleapis.com/v0/b/turismo-app-fa581.firebasestorage.app/o/imagens%2Facomodacoes%2F1755921099981_Imagem_do_WhatsApp_de_2025_08_12_a_s_10.13.16_6460acd6.jpg?alt=media&token=...
-
   const regex = /o\/(.+?)\?/;
   const match = url.match(regex);
   return match ? decodeURIComponent(match[1]) : null;
@@ -60,41 +54,82 @@ const cleanUrls = (urls) => {
     .filter(url => url && url.startsWith('http'));
 };
 
-// Rota raiz (/)
+// Rota raiz
 app.get('/', (req, res) => {
   res.send(`
     <h1>🚀 API do Guia da Cidade</h1>
     <p>Esta é a API REST do app de turismo da sua cidade.</p>
     <h2>🔗 Endpoints disponíveis:</h2>
     <ul>
-      <li><a href="/api/pontos-turisticos">GET /api/pontos-turisticos</a></li>
+      <li>POST /api/login</li>
+      <li>GET /api/pontos-turisticos</li>
       <li>POST /api/pontos-turisticos</li>
       <li>PUT /api/pontos-turisticos/:id</li>
       <li>DELETE /api/pontos-turisticos/:id</li>
-      <li><a href="/api/restaurantes">GET /api/restaurantes</a></li>
+      <li>GET /api/restaurantes</li>
       <li>POST /api/restaurantes</li>
       <li>PUT /api/restaurantes/:id</li>
       <li>DELETE /api/restaurantes/:id</li>
-      <li><a href="/api/acomodacoes">GET /api/acomodacoes</a></li>
+      <li>GET /api/acomodacoes</li>
       <li>POST /api/acomodacoes</li>
       <li>PUT /api/acomodacoes/:id</li>
       <li>DELETE /api/acomodacoes/:id</li>
     </ul>
-    <p>📅 Criado em 2025</p>
   `);
 });
 
-// Rota de teste
-app.get('/api', (req, res) => {
-  res.json({ message: 'API do Guia da Cidade está online!' });
+// Middleware de autenticação simples
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Acesso negado. Token não fornecido.' });
+  }
+
+  // Para simplificar, aceita qualquer token não vazio
+  next();
+};
+
+// LOGIN - Rota para autenticação
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Campos obrigatórios: e-mail e senha'
+      });
+    }
+
+    // Em produção, conecte com Firebase Auth ou banco de dados
+    const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@cidade.com';
+    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Senha123!';
+
+    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+      const token = 'token_valido_' + Date.now();
+      
+      res.status(200).json({
+        token,
+        email,
+        message: 'Login realizado com sucesso!'
+      });
+    } else {
+      res.status(401).json({
+        error: 'E-mail ou senha inválidos'
+      });
+    }
+  } catch (error) {
+    console.error('Erro no login:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
+  }
 });
 
 // ========================
 // PONTOS TURÍSTICOS
 // ========================
 
-// GET /pontos-turisticos
-app.get('/api/pontos-turisticos', async (req, res) => {
+app.get('/api/pontos-turisticos', authenticateToken, async (req, res) => {
   try {
     const snapshot = await getDocs(collection(db, 'pontosTuristicos'));
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -104,8 +139,7 @@ app.get('/api/pontos-turisticos', async (req, res) => {
   }
 });
 
-// POST /pontos-turisticos
-app.post('/api/pontos-turisticos', async (req, res) => {
+app.post('/api/pontos-turisticos', authenticateToken, async (req, res) => {
   try {
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
 
@@ -146,8 +180,7 @@ app.post('/api/pontos-turisticos', async (req, res) => {
   }
 });
 
-// PUT /pontos-turisticos/:id
-app.put('/api/pontos-turisticos/:id', async (req, res) => {
+app.put('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
@@ -190,15 +223,13 @@ app.put('/api/pontos-turisticos/:id', async (req, res) => {
   }
 });
 
-// DELETE /pontos-turisticos/:id
-app.delete('/api/pontos-turisticos/:id', async (req, res) => {
+app.delete('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) {
       return res.status(400).json({ error: 'ID é obrigatório' });
     }
 
-    // 1. Busca o documento antes de excluir
     const docRef = doc(db, 'pontosTuristicos', id);
     const docSnap = await getDoc(docRef);
 
@@ -208,7 +239,6 @@ app.delete('/api/pontos-turisticos/:id', async (req, res) => {
 
     const dados = docSnap.data();
 
-    // 2. Exclui as imagens do Storage
     if (Array.isArray(dados.imagens)) {
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
@@ -223,9 +253,7 @@ app.delete('/api/pontos-turisticos/:id', async (req, res) => {
       }
     }
 
-    // 3. Exclui o documento do Firestore
     await deleteDoc(docRef);
-
     res.status(200).json({ message: 'Ponto turístico excluído com sucesso!' });
   } catch (error) {
     console.error('Erro ao excluir ponto turístico:', error);
@@ -237,8 +265,7 @@ app.delete('/api/pontos-turisticos/:id', async (req, res) => {
 // RESTAURANTES
 // ========================
 
-// GET /restaurantes
-app.get('/api/restaurantes', async (req, res) => {
+app.get('/api/restaurantes', authenticateToken, async (req, res) => {
   try {
     const snapshot = await getDocs(collection(db, 'restaurantes'));
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -248,8 +275,7 @@ app.get('/api/restaurantes', async (req, res) => {
   }
 });
 
-// POST /restaurantes
-app.post('/api/restaurantes', async (req, res) => {
+app.post('/api/restaurantes', authenticateToken, async (req, res) => {
   try {
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
 
@@ -290,8 +316,7 @@ app.post('/api/restaurantes', async (req, res) => {
   }
 });
 
-// PUT /restaurantes/:id
-app.put('/api/restaurantes/:id', async (req, res) => {
+app.put('/api/restaurantes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
@@ -334,15 +359,13 @@ app.put('/api/restaurantes/:id', async (req, res) => {
   }
 });
 
-// DELETE /restaurantes/:id
-app.delete('/api/restaurantes/:id', async (req, res) => {
+app.delete('/api/restaurantes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) {
       return res.status(400).json({ error: 'ID é obrigatório' });
     }
 
-    // 1. Busca o documento antes de excluir
     const docRef = doc(db, 'restaurantes', id);
     const docSnap = await getDoc(docRef);
 
@@ -352,7 +375,6 @@ app.delete('/api/restaurantes/:id', async (req, res) => {
 
     const dados = docSnap.data();
 
-    // 2. Exclui as imagens do Storage
     if (Array.isArray(dados.imagens)) {
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
@@ -367,9 +389,7 @@ app.delete('/api/restaurantes/:id', async (req, res) => {
       }
     }
 
-    // 3. Exclui o documento do Firestore
     await deleteDoc(docRef);
-
     res.status(200).json({ message: 'Restaurante excluído com sucesso!' });
   } catch (error) {
     console.error('Erro ao excluir restaurante:', error);
@@ -381,8 +401,7 @@ app.delete('/api/restaurantes/:id', async (req, res) => {
 // ACOMODAÇÕES
 // ========================
 
-// GET /acomodacoes
-app.get('/api/acomodacoes', async (req, res) => {
+app.get('/api/acomodacoes', authenticateToken, async (req, res) => {
   try {
     const snapshot = await getDocs(collection(db, 'acomodacoes'));
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -392,8 +411,7 @@ app.get('/api/acomodacoes', async (req, res) => {
   }
 });
 
-// POST /acomodacoes
-app.post('/api/acomodacoes', async (req, res) => {
+app.post('/api/acomodacoes', authenticateToken, async (req, res) => {
   try {
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
 
@@ -434,8 +452,7 @@ app.post('/api/acomodacoes', async (req, res) => {
   }
 });
 
-// PUT /acomodacoes/:id
-app.put('/api/acomodacoes/:id', async (req, res) => {
+app.put('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
@@ -478,15 +495,13 @@ app.put('/api/acomodacoes/:id', async (req, res) => {
   }
 });
 
-// DELETE /acomodacoes/:id
-app.delete('/api/acomodacoes/:id', async (req, res) => {
+app.delete('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) {
       return res.status(400).json({ error: 'ID é obrigatório' });
     }
 
-    // 1. Busca o documento antes de excluir
     const docRef = doc(db, 'acomodacoes', id);
     const docSnap = await getDoc(docRef);
 
@@ -496,7 +511,6 @@ app.delete('/api/acomodacoes/:id', async (req, res) => {
 
     const dados = docSnap.data();
 
-    // 2. Exclui as imagens do Storage
     if (Array.isArray(dados.imagens)) {
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
@@ -511,9 +525,7 @@ app.delete('/api/acomodacoes/:id', async (req, res) => {
       }
     }
 
-    // 3. Exclui o documento do Firestore
     await deleteDoc(docRef);
-
     res.status(200).json({ message: 'Acomodação excluída com sucesso!' });
   } catch (error) {
     console.error('Erro ao excluir acomodação:', error);
@@ -521,75 +533,8 @@ app.delete('/api/acomodacoes/:id', async (req, res) => {
   }
 });
 
-// POST /api/excluir-imagem
-app.post('/api/excluir-imagem', async (req, res) => {
-  try {
-    const { filePath } = req.body;
-
-    if (!filePath) {
-      return res.status(400).json({ error: '.filePath é obrigatório' });
-    }
-
-    // ✅ Exclui do Storage
-    await bucket.file(filePath).delete();
-
-    res.status(200).json({ message: 'Imagem excluída com sucesso!' });
-  } catch (error) {
-    console.error('Erro ao excluir imagem:', error);
-    res.status(500).json({ error: 'Erro ao excluir imagem do Storage' });
-  }
-});
-
-// POST /api/login
-app.post('/api/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // ✅ Valida campos obrigatórios
-    if (!email || !password) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: e-mail e senha'
-      });
-    }
-
-    // ✅ Valida credenciais (exemplo simples)
-    const ADMIN_EMAIL = 'admin@cidade.com';
-    const ADMIN_PASSWORD = 'Senha123!'; // ✅ Use variáveis de ambiente em produção
-
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      // ✅ Login bem-sucedido
-      res.status(200).json({
-        email,
-        message: 'Login realizado com sucesso!'
-      });
-    } else {
-      // ❌ Credenciais inválidas
-      res.status(401).json({
-        error: 'E-mail ou senha inválidos'
-      });
-    }
-  } catch (error) {
-    console.error('Erro no login:', error);
-    res.status(500).json({ error: 'Erro no servidor' });
-  }
-});
-
-
 // Inicia o servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 API rodando em http://localhost:${PORT}/api`);
-  console.log(`🔗 Endpoints disponíveis:`);
-  console.log(`   GET  /api/pontos-turisticos`);
-  console.log(`   POST /api/pontos-turisticos`);
-  console.log(`   PUT  /api/pontos-turisticos/:id`);
-  console.log(`   DELETE /api/pontos-turisticos/:id`);
-  console.log(`   GET  /api/restaurantes`);
-  console.log(`   POST /api/restaurantes`);
-  console.log(`   PUT  /api/restaurantes/:id`);
-  console.log(`   DELETE /api/restaurantes/:id`);
-  console.log(`   GET  /api/acomodacoes`);
-  console.log(`   POST /api/acomodacoes`);
-  console.log(`   PUT  /api/acomodacoes/:id`);
-  console.log(`   DELETE /api/acomodacoes/:id`);
+  console.log(`🚀 API rodando em http://localhost:${PORT}`);
 });
