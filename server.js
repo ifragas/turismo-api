@@ -134,7 +134,8 @@ app.post('/api/login', async (req, res) => {
 // PONTOS TURÍSTICOS
 // ========================
 
-app.get('/api/pontos-turisticos', authenticateToken, async (req, res) => {
+// GET pública - qualquer um pode acessar (app mobile)
+app.get('/api/pontos-turisticos', async (req, res) => {
   try {
     const snapshot = await getDocs(collection(db, 'pontosTuristicos'));
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -144,6 +145,7 @@ app.get('/api/pontos-turisticos', authenticateToken, async (req, res) => {
   }
 });
 
+// POST protegida - só admin pode criar
 app.post('/api/pontos-turisticos', authenticateToken, async (req, res) => {
   try {
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
@@ -185,6 +187,7 @@ app.post('/api/pontos-turisticos', authenticateToken, async (req, res) => {
   }
 });
 
+// PUT protegida - só admin pode editar
 app.put('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -228,6 +231,7 @@ app.put('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// DELETE protegida - só admin pode excluir
 app.delete('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -270,7 +274,8 @@ app.delete('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => 
 // RESTAURANTES
 // ========================
 
-app.get('/api/restaurantes', authenticateToken, async (req, res) => {
+// GET pública - qualquer um pode acessar (app mobile)
+app.get('/api/restaurantes', async (req, res) => {
   try {
     const snapshot = await getDocs(collection(db, 'restaurantes'));
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -280,6 +285,7 @@ app.get('/api/restaurantes', authenticateToken, async (req, res) => {
   }
 });
 
+// POST protegida - só admin pode criar
 app.post('/api/restaurantes', authenticateToken, async (req, res) => {
   try {
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
@@ -321,6 +327,7 @@ app.post('/api/restaurantes', authenticateToken, async (req, res) => {
   }
 });
 
+// PUT protegida - só admin pode editar
 app.put('/api/restaurantes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -364,6 +371,7 @@ app.put('/api/restaurantes/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// DELETE protegida - só admin pode excluir
 app.delete('/api/restaurantes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -406,7 +414,8 @@ app.delete('/api/restaurantes/:id', authenticateToken, async (req, res) => {
 // ACOMODAÇÕES
 // ========================
 
-app.get('/api/acomodacoes', authenticateToken, async (req, res) => {
+// GET pública - qualquer um pode acessar (app mobile)
+app.get('/api/acomodacoes', async (req, res) => {
   try {
     const snapshot = await getDocs(collection(db, 'acomodacoes'));
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -416,6 +425,7 @@ app.get('/api/acomodacoes', authenticateToken, async (req, res) => {
   }
 });
 
+// POST protegida - só admin pode criar
 app.post('/api/acomodacoes', authenticateToken, async (req, res) => {
   try {
     const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
@@ -457,6 +467,7 @@ app.post('/api/acomodacoes', authenticateToken, async (req, res) => {
   }
 });
 
+// PUT protegida - só admin pode editar
 app.put('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -500,6 +511,7 @@ app.put('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// DELETE protegida - só admin pode excluir
 app.delete('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
