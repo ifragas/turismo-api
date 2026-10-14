@@ -3,12 +3,28 @@ const cors = require('cors');
 const { initializeApp, getApps } = require('firebase/app');
 const { getFirestore, collection, getDocs, addDoc, doc, deleteDoc, updateDoc, getDoc } = require('firebase/firestore');
 require('dotenv').config();
+const Joi = require('joi');
+const rateLimit = require('express-rate-limit');
 
 // Firebase Admin SDK
 const admin = require('firebase-admin');
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 
 const app = express();
+
+// Limiter para proteger a API contra excesso de requisições
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100, // Limite cada IP a 100 requisições por "windowMs"
+  message: {
+    error: 'Muitas requisições criadas a partir deste IP, por favor tente novamente após 15 minutos.'
+  },
+  standardHeaders: true, // Retorna os headers de rate limit nas respostas (`RateLimit-*`)
+  legacyHeaders: false, // Desativa os headers `X-RateLimit-*`
+});
+
+// Aplica o limitador globalmente em todas as rotas da API
+app.use('/api/', limiter);
 
 // Middleware
 app.use(cors({ origin: '*' }));
@@ -27,6 +43,33 @@ const firebaseConfig = {
 // Inicializa o Firebase
 if (!getApps().length) initializeApp(firebaseConfig);
 const db = getFirestore();
+
+// Dicionário para traduzir a URL para o nome da coleção no Firebase e o tipo do item
+const colecoesMap = {
+  'pontos-turisticos': { colecao: 'pontosTuristicos', tipoNome: 'Ponto Turístico' },
+  'restaurantes': { colecao: 'restaurantes', tipoNome: 'Restaurante' },
+  'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' }
+};
+
+// Esquema de validação com Joi para os itens de turismo
+const itemSchema = Joi.object({
+  nome: Joi.string().min(2).max(100).required().messages({
+    'string.base': 'O campo nome deve ser uma string',
+    'string.empty': 'O campo nome não pode estar vazio',
+    'any.required': 'O campo nome é obrigatório'
+  }),
+  descricao: Joi.string().min(5).max(500).required().messages({
+    'string.base': 'O campo descrição deve ser uma string',
+    'string.empty': 'O campo descrição não pode estar vazio',
+    'any.required': 'O campo descrição é obrigatório'
+  }),
+  endereco: Joi.string().allow('', null),
+  horario: Joi.string().allow('', null),
+  imagem: Joi.string().uri().allow('', null),
+  imagens: Joi.array().items(Joi.string().uri()).allow(null),
+  latitude: Joi.number().allow(null),
+  longitude: Joi.number().allow(null)
+});
 
 // Inicializa o Firebase Admin
 if (!admin.apps.length) {
@@ -130,116 +173,151 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// ========================
-// PONTOS TURÍSTICOS
-// ========================
-
-// GET pública - qualquer um pode acessar (app mobile)
-app.get('/api/pontos-turisticos', async (req, res) => {
+// GET dinâmico para qualquer categoria com suporte a paginação e ordenação
+app.get('/api/:tipo', async (req, res) => {
   try {
-    const snapshot = await getDocs(collection(db, 'pontosTuristicos'));
-    const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const { tipo } = req.params;
+    const config = colecoesMap[tipo];
+
+    if (!config) {
+      return res.status(400).json({ error: 'Tipo de coleção inválido' });
+    }
+
+    // Pegamos parâmetros opcionais da query string (ex: /api/pontos-turisticos?limit=5)
+    const limitVal = parseInt(req.query.limit);
+
+    // Montamos a query base do Firestore
+    let q = collection(db, config.colecao);
+
+    // Se o usuário passou um limite válido, aplicamos limit()
+    // Nota: Para usar ordenação por createdAt, podemos adicionar orderBy se desejado
+    const snapshot = await getDocs(q);
+    let lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Ordena do mais recente para o mais antigo (caso possuam createdAt)
+    lista.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+    // Aplica o limite se informado
+    if (!isNaN(limitVal) && limitVal > 0) {
+      lista = lista.slice(0, limitVal);
+    }
+
     res.json(lista);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar pontos turísticos' });
+    console.error('Erro ao buscar dados:', error);
+    res.status(500).json({ error: 'Erro ao buscar dados' });
   }
 });
 
-// POST protegida - só admin pode criar
-app.post('/api/pontos-turisticos', authenticateToken, async (req, res) => {
+// POST dinâmico - protegido por token e validado com Joi
+app.post('/api/:tipo', authenticateToken, async (req, res) => {
   try {
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
+    const { tipo } = req.params;
+    const config = colecoesMap[tipo];
 
-    if (!nome || !descricao) {
+    if (!config) {
+      return res.status(400).json({ error: 'Tipo de coleção inválido' });
+    }
+
+    // Valida o corpo da requisição usando o Joi
+    const { error, value } = itemSchema.validate(req.body, { abortEarly: false });
+    if (error) {
       return res.status(400).json({
-        error: 'Campos obrigatórios: nome e descrição'
+        error: 'Erro de validação',
+        detalhes: error.details.map(detail => detail.message)
       });
     }
 
-    const docRef = await addDoc(collection(db, 'pontosTuristicos'), {
+    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = value;
+
+    const dadosNovoItem = {
       nome,
       descricao,
       endereco: endereco || '',
       horario: horario || '',
       imagem: imagem?.trim() || '',
       imagens: cleanUrls(imagens),
-      tipo: 'Ponto Turístico',
+      tipo: config.tipoNome,
       latitude: latitude || null,
       longitude: longitude || null,
       createdAt: new Date().toISOString()
-    });
+    };
+
+    const docRef = await addDoc(collection(db, config.colecao), dadosNovoItem);
 
     res.status(201).json({
       id: docRef.id,
-      nome,
-      descricao,
-      endereco,
-      horario,
-      imagem,
-      imagens: cleanUrls(imagens),
-      tipo: 'Ponto Turístico',
-      latitude,
-      longitude
+      ...dadosNovoItem
     });
   } catch (error) {
-    console.error('Erro ao cadastrar ponto turístico:', error);
-    res.status(500).json({ error: 'Erro ao cadastrar ponto turístico' });
+    console.error('Erro ao cadastrar item:', error);
+    res.status(500).json({ error: 'Erro ao cadastrar item' });
   }
 });
 
-// PUT protegida - só admin pode editar
-app.put('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
+// PUT dinâmico - protegido por token e validado com Joi
+app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
+    const { tipo, id } = req.params;
+    const config = colecoesMap[tipo];
 
-    if (!nome || !descricao) {
+    if (!config) {
+      return res.status(400).json({ error: 'Tipo de coleção inválido' });
+    }
+
+    // Valida o corpo da requisição usando o Joi
+    const { error, value } = itemSchema.validate(req.body, { abortEarly: false });
+    if (error) {
       return res.status(400).json({
-        error: 'Campos obrigatórios: nome e descrição'
+        error: 'Erro de validação',
+        detalhes: error.details.map(detail => detail.message)
       });
     }
 
-    const docRef = doc(db, 'pontosTuristicos', id);
-    await updateDoc(docRef, {
+    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = value;
+
+    const docRef = doc(db, config.colecao, id);
+    
+    const dadosAtualizados = {
       nome,
       descricao,
       endereco: endereco || '',
       horario: horario || '',
       imagem: imagem?.trim() || '',
       imagens: cleanUrls(imagens),
-      tipo: 'Ponto Turístico',
+      tipo: config.tipoNome,
       latitude: latitude || null,
       longitude: longitude || null,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    await updateDoc(docRef, dadosAtualizados);
 
     res.status(200).json({
       id,
-      nome,
-      descricao,
-      endereco,
-      horario,
-      imagem,
-      imagens: cleanUrls(imagens),
-      tipo: 'Ponto Turístico',
-      latitude,
-      longitude
+      ...dadosAtualizados
     });
   } catch (error) {
-    console.error('Erro ao atualizar ponto turístico:', error);
-    res.status(500).json({ error: 'Erro ao atualizar ponto turístico' });
+    console.error('Erro ao atualizar item:', error);
+    res.status(500).json({ error: 'Erro ao atualizar item' });
   }
 });
 
-// DELETE protegida - só admin pode excluir
-app.delete('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => {
+// DELETE dinâmico - protegido por token - para qualquer categoria
+app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
+    const { tipo, id } = req.params;
+    const config = colecoesMap[tipo];
+
+    if (!config) {
+      return res.status(400).json({ error: 'Tipo de coleção inválido' });
+    }
+
     if (!id) {
       return res.status(400).json({ error: 'ID é obrigatório' });
     }
 
-    const docRef = doc(db, 'pontosTuristicos', id);
+    const docRef = doc(db, config.colecao, id);
     const docSnap = await getDoc(docRef);
 
     if (!docSnap.exists()) {
@@ -248,6 +326,7 @@ app.delete('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => 
 
     const dados = docSnap.data();
 
+    // Remove imagens associadas do Storage se existirem
     if (Array.isArray(dados.imagens)) {
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
@@ -263,292 +342,13 @@ app.delete('/api/pontos-turisticos/:id', authenticateToken, async (req, res) => 
     }
 
     await deleteDoc(docRef);
-    res.status(200).json({ message: 'Ponto turístico excluído com sucesso!' });
+    res.status(200).json({ message: 'Item excluído com sucesso!' });
   } catch (error) {
-    console.error('Erro ao excluir ponto turístico:', error);
-    res.status(500).json({ error: 'Erro ao excluir ponto turístico' });
+    console.error('Erro ao excluir item:', error);
+    res.status(500).json({ error: 'Erro ao excluir item' });
   }
 });
 
-// ========================
-// RESTAURANTES
-// ========================
-
-// GET pública - qualquer um pode acessar (app mobile)
-app.get('/api/restaurantes', async (req, res) => {
-  try {
-    const snapshot = await getDocs(collection(db, 'restaurantes'));
-    const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(lista);
-  } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar restaurantes' });
-  }
-});
-
-// POST protegida - só admin pode criar
-app.post('/api/restaurantes', authenticateToken, async (req, res) => {
-  try {
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
-
-    if (!nome || !descricao) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: nome e descrição'
-      });
-    }
-
-    const docRef = await addDoc(collection(db, 'restaurantes'), {
-      nome,
-      descricao,
-      endereco: endereco || '',
-      horario: horario || '',
-      imagem: imagem?.trim() || '',
-      imagens: cleanUrls(imagens),
-      tipo: 'Restaurante',
-      latitude: latitude || null,
-      longitude: longitude || null,
-      createdAt: new Date().toISOString()
-    });
-
-    res.status(201).json({
-      id: docRef.id,
-      nome,
-      descricao,
-      endereco,
-      horario,
-      imagem,
-      imagens: cleanUrls(imagens),
-      tipo: 'Restaurante',
-      latitude,
-      longitude
-    });
-  } catch (error) {
-    console.error('Erro ao cadastrar restaurante:', error);
-    res.status(500).json({ error: 'Erro ao cadastrar restaurante' });
-  }
-});
-
-// PUT protegida - só admin pode editar
-app.put('/api/restaurantes/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
-
-    if (!nome || !descricao) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: nome e descrição'
-      });
-    }
-
-    const docRef = doc(db, 'restaurantes', id);
-    await updateDoc(docRef, {
-      nome,
-      descricao,
-      endereco: endereco || '',
-      horario: horario || '',
-      imagem: imagem?.trim() || '',
-      imagens: cleanUrls(imagens),
-      tipo: 'Restaurante',
-      latitude: latitude || null,
-      longitude: longitude || null,
-      updatedAt: new Date().toISOString()
-    });
-
-    res.status(200).json({
-      id,
-      nome,
-      descricao,
-      endereco,
-      horario,
-      imagem,
-      imagens: cleanUrls(imagens),
-      tipo: 'Restaurante',
-      latitude,
-      longitude
-    });
-  } catch (error) {
-    console.error('Erro ao atualizar restaurante:', error);
-    res.status(500).json({ error: 'Erro ao atualizar restaurante' });
-  }
-});
-
-// DELETE protegida - só admin pode excluir
-app.delete('/api/restaurantes/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!id) {
-      return res.status(400).json({ error: 'ID é obrigatório' });
-    }
-
-    const docRef = doc(db, 'restaurantes', id);
-    const docSnap = await getDoc(docRef);
-
-    if (!docSnap.exists()) {
-      return res.status(404).json({ error: 'Documento não encontrado' });
-    }
-
-    const dados = docSnap.data();
-
-    if (Array.isArray(dados.imagens)) {
-      for (const url of dados.imagens) {
-        const filePath = extractFilePath(url);
-        if (filePath) {
-          try {
-            await bucket.file(filePath).delete();
-            console.log('✅ Imagem excluída do Storage:', filePath);
-          } catch (error) {
-            console.warn('⚠️ Erro ao excluir imagem:', filePath, error.message);
-          }
-        }
-      }
-    }
-
-    await deleteDoc(docRef);
-    res.status(200).json({ message: 'Restaurante excluído com sucesso!' });
-  } catch (error) {
-    console.error('Erro ao excluir restaurante:', error);
-    res.status(500).json({ error: 'Erro ao excluir restaurante' });
-  }
-});
-
-// ========================
-// ACOMODAÇÕES
-// ========================
-
-// GET pública - qualquer um pode acessar (app mobile)
-app.get('/api/acomodacoes', async (req, res) => {
-  try {
-    const snapshot = await getDocs(collection(db, 'acomodacoes'));
-    const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(lista);
-  } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar acomodações' });
-  }
-});
-
-// POST protegida - só admin pode criar
-app.post('/api/acomodacoes', authenticateToken, async (req, res) => {
-  try {
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
-
-    if (!nome || !descricao) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: nome e descrição'
-      });
-    }
-
-    const docRef = await addDoc(collection(db, 'acomodacoes'), {
-      nome,
-      descricao,
-      endereco: endereco || '',
-      horario: horario || '',
-      imagem: imagem?.trim() || '',
-      imagens: cleanUrls(imagens),
-      tipo: 'Acomodação',
-      latitude: latitude || null,
-      longitude: longitude || null,
-      createdAt: new Date().toISOString()
-    });
-
-    res.status(201).json({
-      id: docRef.id,
-      nome,
-      descricao,
-      endereco,
-      horario,
-      imagem,
-      imagens: cleanUrls(imagens),
-      tipo: 'Acomodação',
-      latitude,
-      longitude
-    });
-  } catch (error) {
-    console.error('Erro ao cadastrar acomodação:', error);
-    res.status(500).json({ error: 'Erro ao cadastrar acomodação' });
-  }
-});
-
-// PUT protegida - só admin pode editar
-app.put('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = req.body;
-
-    if (!nome || !descricao) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: nome e descrição'
-      });
-    }
-
-    const docRef = doc(db, 'acomodacoes', id);
-    await updateDoc(docRef, {
-      nome,
-      descricao,
-      endereco: endereco || '',
-      horario: horario || '',
-      imagem: imagem?.trim() || '',
-      imagens: cleanUrls(imagens),
-      tipo: 'Acomodação',
-      latitude: latitude || null,
-      longitude: longitude || null,
-      updatedAt: new Date().toISOString()
-    });
-
-    res.status(200).json({
-      id,
-      nome,
-      descricao,
-      endereco,
-      horario,
-      imagem,
-      imagens: cleanUrls(imagens),
-      tipo: 'Acomodação',
-      latitude,
-      longitude
-    });
-  } catch (error) {
-    console.error('Erro ao atualizar acomodação:', error);
-    res.status(500).json({ error: 'Erro ao atualizar acomodação' });
-  }
-});
-
-// DELETE protegida - só admin pode excluir
-app.delete('/api/acomodacoes/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!id) {
-      return res.status(400).json({ error: 'ID é obrigatório' });
-    }
-
-    const docRef = doc(db, 'acomodacoes', id);
-    const docSnap = await getDoc(docRef);
-
-    if (!docSnap.exists()) {
-      return res.status(404).json({ error: 'Documento não encontrado' });
-    }
-
-    const dados = docSnap.data();
-
-    if (Array.isArray(dados.imagens)) {
-      for (const url of dados.imagens) {
-        const filePath = extractFilePath(url);
-        if (filePath) {
-          try {
-            await bucket.file(filePath).delete();
-            console.log('✅ Imagem excluída do Storage:', filePath);
-          } catch (error) {
-            console.warn('⚠️ Erro ao excluir imagem:', filePath, error.message);
-          }
-        }
-      }
-    }
-
-    await deleteDoc(docRef);
-    res.status(200).json({ message: 'Acomodação excluída com sucesso!' });
-  } catch (error) {
-    console.error('Erro ao excluir acomodação:', error);
-    res.status(500).json({ error: 'Erro ao excluir acomodação' });
-  }
-});
 
 // Inicia o servidor
 const PORT = process.env.PORT || 3000;
