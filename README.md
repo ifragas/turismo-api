@@ -22,27 +22,36 @@ Paginação e Ordenação: Suporte a parâmetros de consulta (?limit=X) e ordena
 Gestão Inteligente de Mídia: Exclusão automática de arquivos associados no Firebase Storage ao apagar um registro.
 
 📡 Endpoints da API
+
 Método	Rota	Descrição	Autenticação
 GET	/api/:tipo	Lista os itens da categoria (com paginação opcional)	Pública
+
 POST	/api/:tipo	Cadastra um novo item com validação Joi	Requer Token (Bearer)
+
 PUT	/api/:tipo/:id	Atualiza um item existente	Requer Token (Bearer)
+
 DELETE	/api/:tipo/:id	Remove o item do banco e limpa arquivos do Storage	Requer Token (Bearer)
+
 ⚙️ Como Executar o Projeto Localmente
 Clone o repositório:
 
 Bash
+
 git clone https://github.com/ifragas/turismo-api.git
 Instale as dependências:
 
 Bash
+
 npm install
 Configure as variáveis de ambiente com as credenciais do seu projeto Firebase.
 
 Inicie o servidor em modo de desenvolvimento:
 
 Bash
+
 npm run dev
 Para rodar os testes automatizados:
 
 Bash
+
 npm test
