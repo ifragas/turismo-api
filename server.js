@@ -1,7 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const { initializeApp, getApps } = require('firebase/app');
-const { getFirestore, collection, getDocs, addDoc, doc, deleteDoc, updateDoc, getDoc } = require('firebase/firestore');
 require('dotenv').config();
 const Joi = require('joi');
 const rateLimit = require('express-rate-limit');
@@ -47,19 +45,17 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Configuração do Firebase
-const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY,
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.FIREBASE_APP_ID
-};
+// Inicializa o Firebase Admin
+if (!admin.apps.length && serviceAccount) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+  });
+}
 
-// Inicializa o Firebase
-if (!getApps().length) initializeApp(firebaseConfig);
-const db = getFirestore();
+// Configuração do Firestore e Storage via Admin SDK (Privilégios Totais)
+const db = admin.apps.length ? admin.firestore() : null;
+const bucket = admin.apps.length ? admin.storage().bucket() : null;
 
 // Dicionário para traduzir a URL para o nome da coleção no Firebase e o tipo do item
 const colecoesMap = {
@@ -87,16 +83,6 @@ const itemSchema = Joi.object({
   latitude: Joi.number().allow(null),
   longitude: Joi.number().allow(null)
 });
-
-// Inicializa o Firebase Admin
-if (!admin.apps.length && serviceAccount) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-  });
-}
-
-const bucket = admin.apps.length ? admin.storage().bucket() : null;
 
 // Função melhorada para extrair o caminho limpo da URL do Storage
 const extractFilePath = (url) => {
@@ -194,7 +180,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// GET dinâmico para qualquer categoria
+// GET dinâmico para qualquer categoria (Admin Firestore)
 app.get('/api/:tipo', async (req, res) => {
   try {
     const { tipo } = req.params;
@@ -204,13 +190,12 @@ app.get('/api/:tipo', async (req, res) => {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
-    const limitVal = parseInt(req.query.limit);
-    let q = collection(db, config.colecao);
-    const snapshot = await getDocs(q);
+    const snapshot = await db.collection(config.colecao).get();
     let lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     lista.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
+    const limitVal = parseInt(req.query.limit);
     if (!isNaN(limitVal) && limitVal > 0) {
       lista = lista.slice(0, limitVal);
     }
@@ -222,7 +207,7 @@ app.get('/api/:tipo', async (req, res) => {
   }
 });
 
-// POST dinâmico - Protegido por token real, validação Joi e upload Multer
+// POST dinâmico - Protegido por token real, validação Joi e upload Multer (Admin Firestore)
 app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -288,7 +273,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       createdAt: new Date().toISOString()
     };
 
-    const docRef = await addDoc(collection(db, config.colecao), dadosNovoItem);
+    const docRef = await db.collection(config.colecao).add(dadosNovoItem);
 
     res.status(201).json({
       id: docRef.id,
@@ -312,8 +297,10 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
   }
 });
 
-// PUT dinâmico - Protegido por token real, validado com Joi e sincronização de capa
-app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
+// PUT dinâmico - Protegido por token real, validado com Joi e sincronização de capa (Admin Firestore)
+app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async (req, res) => {
+  let uploadedFilePaths = [];
+
   try {
     const { tipo, id } = req.params;
     const config = colecoesMap[tipo];
@@ -322,7 +309,16 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
-    const { error, value } = itemSchema.validate(req.body, { abortEarly: false });
+    const bodyToValidate = {
+      nome: req.body.nome ? String(req.body.nome).trim() : '',
+      descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
+      endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
+      horario: req.body.horario ? String(req.body.horario).trim() : '',
+      latitude: req.body.latitude !== '' && req.body.latitude != null ? Number(req.body.latitude) : null,
+      longitude: req.body.longitude !== '' && req.body.longitude != null ? Number(req.body.longitude) : null,
+    };
+
+    const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
     if (error) {
       return res.status(400).json({
         error: 'Erro de validação',
@@ -330,20 +326,19 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    const { nome, descricao, endereco, horario, imagens, latitude, longitude } = value;
-    const docRef = doc(db, config.colecao, id);
-    
-    const docSnap = await getDoc(docRef);
-    if (!docSnap.exists()) {
+    const docRef = db.collection(config.colecao).doc(id);
+    const docSnap = await docRef.get();
+    if (!docSnap.exists) {
       return res.status(404).json({ error: 'Documento não encontrado' });
     }
     const dadosAntigos = docSnap.data();
 
-    const novasImagensLimpas = cleanUrls(imagens);
+    let imagensExistentes = req.body.imagensExistentes || [];
+    if (typeof imagensExistentes === 'string') imagensExistentes = [imagensExistentes];
 
     if (Array.isArray(dadosAntigos.imagens) && bucket) {
       for (const urlAntiga of dadosAntigos.imagens) {
-        if (!novasImagensLimpas.includes(urlAntiga)) {
+        if (!imagensExistentes.includes(urlAntiga)) {
           const filePath = extractFilePath(urlAntiga);
           if (filePath) {
             try {
@@ -356,22 +351,43 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
       }
     }
 
-    const primeiraImagemURL = novasImagensLimpas.length > 0 ? novasImagensLimpas[0] : '';
+    const novasImagensURL = [];
+    if (req.files && req.files.length > 0 && bucket) {
+      for (let file of req.files) {
+        const cleanedName = cleanFileName(file.originalname);
+        const fileName = Date.now() + '_' + cleanedName;
+        const filePath = `imagens/${tipo}/${fileName}`;
+        const fileRef = bucket.file(filePath);
+
+        await fileRef.save(file.buffer, {
+          metadata: { contentType: file.mimetype },
+        });
+
+        uploadedFilePaths.push(filePath);
+
+        const encodedPath = encodeURIComponent(filePath);
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media`;
+        novasImagensURL.push(publicUrl);
+      }
+    }
+
+    const todasImagensLimpas = cleanUrls([...imagensExistentes, ...novasImagensURL]);
+    const primeiraImagemURL = todasImagensLimpas.length > 0 ? todasImagensLimpas[0] : '';
 
     const dadosAtualizados = {
-      nome,
-      descricao,
-      endereco: endereco || '',
-      horario: horario || '',
+      nome: bodyToValidate.nome,
+      descricao: bodyToValidate.descricao,
+      endereco: bodyToValidate.endereco,
+      horario: bodyToValidate.horario,
       imagem: primeiraImagemURL,
-      imagens: novasImagensLimpas,
+      imagens: todasImagensLimpas,
       tipo: config.tipoNome,
-      latitude: latitude || null,
-      longitude: longitude || null,
+      latitude: bodyToValidate.latitude,
+      longitude: bodyToValidate.longitude,
       updatedAt: new Date().toISOString()
     };
 
-    await updateDoc(docRef, dadosAtualizados);
+    await docRef.update(dadosAtualizados);
 
     res.status(200).json({
       id,
@@ -379,11 +395,18 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao atualizar item:', error);
+    if (uploadedFilePaths.length > 0 && bucket) {
+      for (const filePath of uploadedFilePaths) {
+        try {
+          await bucket.file(filePath).delete();
+        } catch (e) {}
+      }
+    }
     res.status(500).json({ error: 'Erro ao atualizar item' });
   }
 });
 
-// DELETE dinâmico - Protegido por token real
+// DELETE dinâmico - Protegido por token real (Admin Firestore)
 app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
   try {
     const { tipo, id } = req.params;
@@ -397,10 +420,10 @@ app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'ID é obrigatório' });
     }
 
-    const docRef = doc(db, config.colecao, id);
-    const docSnap = await getDoc(docRef);
+    const docRef = db.collection(config.colecao).doc(id);
+    const docSnap = await docRef.get();
 
-    if (!docSnap.exists()) {
+    if (!docSnap.exists) {
       return res.status(404).json({ error: 'Documento não encontrado' });
     }
 
@@ -419,7 +442,7 @@ app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
       }
     }
 
-    await deleteDoc(docRef);
+    await docRef.delete();
     res.status(200).json({ message: 'Item excluído com sucesso!' });
   } catch (error) {
     console.error('Erro ao excluir item:', error);
