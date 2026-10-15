@@ -5,12 +5,16 @@ const { getFirestore, collection, getDocs, addDoc, doc, deleteDoc, updateDoc, ge
 require('dotenv').config();
 const Joi = require('joi');
 const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 
 // Firebase Admin SDK
 const admin = require('firebase-admin');
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 
 const app = express();
+
+// Configuração do Multer para armazenar os arquivos temporariamente na memória RAM
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Limiter para proteger a API contra excesso de requisições
 const limiter = rateLimit({
@@ -19,8 +23,8 @@ const limiter = rateLimit({
   message: {
     error: 'Muitas requisições criadas a partir deste IP, por favor tente novamente após 15 minutos.'
   },
-  standardHeaders: true, // Retorna os headers de rate limit nas respostas (`RateLimit-*`)
-  legacyHeaders: false, // Desativa os headers `X-RateLimit-*`
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Aplica o limitador globalmente em todas as rotas da API
@@ -29,6 +33,7 @@ app.use('/api/', limiter);
 // Middleware
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Configuração do Firebase
 const firebaseConfig = {
@@ -58,7 +63,7 @@ const itemSchema = Joi.object({
     'string.empty': 'O campo nome não pode estar vazio',
     'any.required': 'O campo nome é obrigatório'
   }),
-  descricao: Joi.string().min(5).max(500).required().messages({
+  descricao: Joi.string().min(5).max(2000).required().messages({
     'string.base': 'O campo descrição deve ser uma string',
     'string.empty': 'O campo descrição não pode estar vazio',
     'any.required': 'O campo descrição é obrigatório'
@@ -81,12 +86,18 @@ if (!admin.apps.length) {
 
 const bucket = admin.storage().bucket();
 
-// Função para extrair caminho da URL do Storage
+// Função melhorada para extrair o caminho limpo da URL do Storage
 const extractFilePath = (url) => {
   if (!url) return null;
-  const regex = /o\/(.+?)\?/;
-  const match = url.match(regex);
-  return match ? decodeURIComponent(match[1]) : null;
+  try {
+    const match = url.match(/\/o\/(.+?)(\?|$)/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  } catch (e) {
+    console.error('Erro ao extrair caminho do ficheiro:', e);
+  }
+  return null;
 };
 
 // Função para limpar URLs
@@ -97,32 +108,26 @@ const cleanUrls = (urls) => {
     .filter(url => url && url.startsWith('http'));
 };
 
+// Função para limpar o nome do ficheiro para armazenamento seguro
+const cleanFileName = (originalName) => {
+  return originalName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9.]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '');
+};
+
 // Rota raiz
 app.get('/', (req, res) => {
   res.send(`
     <h1>🚀 API do Guia da Cidade</h1>
     <p>Esta é a API REST do app de turismo da sua cidade.</p>
-    <h2>🔗 Endpoints disponíveis:</h2>
-    <ul>
-      <li>POST /api/login</li>
-      <li>GET /api/pontos-turisticos</li>
-      <li>POST /api/pontos-turisticos</li>
-      <li>PUT /api/pontos-turisticos/:id</li>
-      <li>DELETE /api/pontos-turisticos/:id</li>
-      <li>GET /api/restaurantes</li>
-      <li>POST /api/restaurantes</li>
-      <li>PUT /api/restaurantes/:id</li>
-      <li>DELETE /api/restaurantes/:id</li>
-      <li>GET /api/acomodacoes</li>
-      <li>POST /api/acomodacoes</li>
-      <li>PUT /api/acomodacoes/:id</li>
-      <li>DELETE /api/acomodacoes/:id</li>
-    </ul>
   `);
 });
 
-// Middleware de autenticação simples
-const authenticateToken = (req, res, next) => {
+// Middleware de autenticação real validando o JWT do Firebase Admin SDK
+const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -130,42 +135,52 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'Acesso negado. Token não fornecido.' });
   }
 
-  // Para simplificar, aceita qualquer token não vazio
-  next();
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.user = decodedToken;
+    next();
+  } catch (error) {
+    console.error('Erro ao verificar token de autenticação:', error.message);
+    return res.status(403).json({ error: 'Token inválido ou expirado.' });
+  }
 };
 
-// LOGIN - Rota para autenticação com Firebase Auth
+// LOGIN - Rota segura para validar email e senha rigorosamente via Firebase Auth REST API
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log('🔑 Tentativa de login para:', email);
+    console.log('🔑 FIREBASE_API_KEY presente?', process.env.FIREBASE_API_KEY ? 'Sim' : 'NÃO');
 
     if (!email || !password) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: e-mail e senha'
-      });
+      return res.status(400).json({ error: 'Campos obrigatórios: e-mail e senha' });
     }
 
-    // Com esta configuração, QUALQUER usuário cadastrado no Firebase Auth pode fazer login
-    // O sistema verifica apenas se o usuário existe, não valida a senha diretamente aqui
+    const apiKey = process.env.FIREBASE_API_KEY;
+    const loginUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
+
     try {
-      // Verifica se o usuário existe no Firebase Auth
-      const userRecord = await admin.auth().getUserByEmail(email);
-      
-      // Se chegou aqui, o usuário existe no Firebase
-      // Gera um token simples para autenticação nas outras rotas
-      const token = 'token_' + Date.now() + '_' + userRecord.uid;
-      
+      const response = await fetch(loginUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return res.status(401).json({ error: 'E-mail ou senha inválidos' });
+      }
+
       res.status(200).json({
-        token,
-        email: userRecord.email,
+        token: data.idToken,
+        email: data.email,
         message: 'Login realizado com sucesso!'
       });
-    } catch (firebaseError) {
-      // Usuário não encontrado no Firebase Auth
-      console.error('Erro Firebase Auth:', firebaseError.code, firebaseError.message);
-      res.status(401).json({
-        error: 'E-mail ou senha inválidos'
-      });
+
+    } catch (authError) {
+      console.error('Erro ao autenticar com Firebase Auth:', authError);
+      res.status(401).json({ error: 'E-mail ou senha inválidos' });
     }
   } catch (error) {
     console.error('Erro no login:', error);
@@ -173,7 +188,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// GET dinâmico para qualquer categoria com suporte a paginação e ordenação
+// GET dinâmico para qualquer categoria
 app.get('/api/:tipo', async (req, res) => {
   try {
     const { tipo } = req.params;
@@ -183,21 +198,13 @@ app.get('/api/:tipo', async (req, res) => {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
-    // Pegamos parâmetros opcionais da query string (ex: /api/pontos-turisticos?limit=5)
     const limitVal = parseInt(req.query.limit);
-
-    // Montamos a query base do Firestore
     let q = collection(db, config.colecao);
-
-    // Se o usuário passou um limite válido, aplicamos limit()
-    // Nota: Para usar ordenação por createdAt, podemos adicionar orderBy se desejado
     const snapshot = await getDocs(q);
     let lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-    // Ordena do mais recente para o mais antigo (caso possuam createdAt)
     lista.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-    // Aplica o limite se informado
     if (!isNaN(limitVal) && limitVal > 0) {
       lista = lista.slice(0, limitVal);
     }
@@ -209,8 +216,10 @@ app.get('/api/:tipo', async (req, res) => {
   }
 });
 
-// POST dinâmico - protegido por token e validado com Joi
-app.post('/api/:tipo', authenticateToken, async (req, res) => {
+// POST dinâmico - Protegido por token real, validação Joi e upload Multer
+app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (req, res) => {
+  let uploadedFilePaths = [];
+
   try {
     const { tipo } = req.params;
     const config = colecoesMap[tipo];
@@ -219,27 +228,57 @@ app.post('/api/:tipo', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
-    // Valida o corpo da requisição usando o Joi
-    const { error, value } = itemSchema.validate(req.body, { abortEarly: false });
+    const bodyToValidate = {
+      nome: req.body.nome ? String(req.body.nome).trim() : '',
+      descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
+      endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
+      horario: req.body.horario ? String(req.body.horario).trim() : '',
+      latitude: req.body.latitude !== '' && req.body.latitude != null ? Number(req.body.latitude) : null,
+      longitude: req.body.longitude !== '' && req.body.longitude != null ? Number(req.body.longitude) : null,
+    };
+
+    const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
     if (error) {
+      const detalhesErro = error.details.map(detail => detail.message);
       return res.status(400).json({
         error: 'Erro de validação',
-        detalhes: error.details.map(detail => detail.message)
+        detalhes: detalhesErro
       });
     }
 
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = value;
+    const imagensURL = [];
+
+    if (req.files && req.files.length > 0) {
+      for (let file of req.files) {
+        const cleanedName = cleanFileName(file.originalname);
+        const fileName = Date.now() + '_' + cleanedName;
+        const filePath = `imagens/${tipo}/${fileName}`;
+        const fileRef = bucket.file(filePath);
+
+        await fileRef.save(file.buffer, {
+          metadata: { contentType: file.mimetype },
+        });
+
+        uploadedFilePaths.push(filePath);
+
+        const encodedPath = encodeURIComponent(filePath);
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media`;
+        imagensURL.push(publicUrl);
+      }
+    }
+
+    const primeiraImagemURL = imagensURL.length > 0 ? imagensURL[0] : '';
 
     const dadosNovoItem = {
-      nome,
-      descricao,
-      endereco: endereco || '',
-      horario: horario || '',
-      imagem: imagem?.trim() || '',
-      imagens: cleanUrls(imagens),
+      nome: bodyToValidate.nome,
+      descricao: bodyToValidate.descricao,
+      endereco: bodyToValidate.endereco,
+      horario: bodyToValidate.horario,
+      imagem: primeiraImagemURL,
+      imagens: cleanUrls(imagensURL),
       tipo: config.tipoNome,
-      latitude: latitude || null,
-      longitude: longitude || null,
+      latitude: bodyToValidate.latitude,
+      longitude: bodyToValidate.longitude,
       createdAt: new Date().toISOString()
     };
 
@@ -249,13 +288,25 @@ app.post('/api/:tipo', authenticateToken, async (req, res) => {
       id: docRef.id,
       ...dadosNovoItem
     });
+
   } catch (error) {
     console.error('Erro ao cadastrar item:', error);
+
+    if (uploadedFilePaths.length > 0) {
+      for (const filePath of uploadedFilePaths) {
+        try {
+          await bucket.file(filePath).delete();
+        } catch (delError) {
+          console.error('Erro ao limpar imagem no rollback:', delError.message);
+        }
+      }
+    }
+
     res.status(500).json({ error: 'Erro ao cadastrar item' });
   }
 });
 
-// PUT dinâmico - protegido por token e validado com Joi
+// PUT dinâmico - Protegido por token real, validado com Joi e sincronização de capa
 app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
   try {
     const { tipo, id } = req.params;
@@ -265,7 +316,6 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
-    // Valida o corpo da requisição usando o Joi
     const { error, value } = itemSchema.validate(req.body, { abortEarly: false });
     if (error) {
       return res.status(400).json({
@@ -274,17 +324,41 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    const { nome, descricao, endereco, horario, imagem, imagens, latitude, longitude } = value;
-
+    const { nome, descricao, endereco, horario, imagens, latitude, longitude } = value;
     const docRef = doc(db, config.colecao, id);
     
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) {
+      return res.status(404).json({ error: 'Documento não encontrado' });
+    }
+    const dadosAntigos = docSnap.data();
+
+    const novasImagensLimpas = cleanUrls(imagens);
+
+    if (Array.isArray(dadosAntigos.imagens)) {
+      for (const urlAntiga of dadosAntigos.imagens) {
+        if (!novasImagensLimpas.includes(urlAntiga)) {
+          const filePath = extractFilePath(urlAntiga);
+          if (filePath) {
+            try {
+              await bucket.file(filePath).delete();
+            } catch (delErr) {
+              console.warn('⚠️ Erro ao limpar imagem antiga:', delErr.message);
+            }
+          }
+        }
+      }
+    }
+
+    const primeiraImagemURL = novasImagensLimpas.length > 0 ? novasImagensLimpas[0] : '';
+
     const dadosAtualizados = {
       nome,
       descricao,
       endereco: endereco || '',
       horario: horario || '',
-      imagem: imagem?.trim() || '',
-      imagens: cleanUrls(imagens),
+      imagem: primeiraImagemURL,
+      imagens: novasImagensLimpas,
       tipo: config.tipoNome,
       latitude: latitude || null,
       longitude: longitude || null,
@@ -303,7 +377,7 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// DELETE dinâmico - protegido por token - para qualquer categoria
+// DELETE dinâmico - Protegido por token real
 app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
   try {
     const { tipo, id } = req.params;
@@ -326,16 +400,14 @@ app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
 
     const dados = docSnap.data();
 
-    // Remove imagens associadas do Storage se existirem
     if (Array.isArray(dados.imagens)) {
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
         if (filePath) {
           try {
             await bucket.file(filePath).delete();
-            console.log('✅ Imagem excluída do Storage:', filePath);
           } catch (error) {
-            console.warn('⚠️ Erro ao excluir imagem:', filePath, error.message);
+            console.warn('⚠️ Erro ao excluir imagem do Storage:', filePath, error.message);
           }
         }
       }
@@ -349,8 +421,7 @@ app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
   }
 });
 
-
-// Inicia o servidor
+// Inicia o servidor (Obrigatório para o server subir!)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando em http://localhost:${PORT}`);

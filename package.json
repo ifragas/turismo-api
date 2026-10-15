@@ -17,7 +17,8 @@
     "firebase": "^12.1.0",
     "firebase-admin": "^13.5.0",
     "joi": "^18.2.9",
-    "joy": "^0.1.1"
+    "joy": "^0.1.1",
+    "multer": "^2.4.0"
   },
   "devDependencies": {
     "jest": "^30.5.2",
