@@ -9,7 +9,14 @@ const multer = require('multer');
 
 // Firebase Admin SDK
 const admin = require('firebase-admin');
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+
+// Validação segura da chave de serviço do Firebase
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+} catch (e) {
+  console.error('Erro ao parsear FIREBASE_SERVICE_ACCOUNT_JSON:', e.message);
+}
 
 const app = express();
 
@@ -30,15 +37,12 @@ const limiter = rateLimit({
 // Aplica o limitador globalmente em todas as rotas da API
 app.use('/api/', limiter);
 
-// Middleware
+// Middleware CORS configurado corretamente após a criação do app
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-// Garante tratamento explícito de requisições OPTIONS pré-voo
-app.options('*', cors());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -85,14 +89,14 @@ const itemSchema = Joi.object({
 });
 
 // Inicializa o Firebase Admin
-if (!admin.apps.length) {
+if (!admin.apps.length && serviceAccount) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET
   });
 }
 
-const bucket = admin.storage().bucket();
+const bucket = admin.apps.length ? admin.storage().bucket() : null;
 
 // Função melhorada para extrair o caminho limpo da URL do Storage
 const extractFilePath = (url) => {
@@ -158,7 +162,6 @@ app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     console.log('🔑 Tentativa de login para:', email);
-    console.log('🔑 FIREBASE_API_KEY presente?', process.env.FIREBASE_API_KEY ? 'Sim' : 'NÃO');
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Campos obrigatórios: e-mail e senha' });
@@ -167,29 +170,24 @@ app.post('/api/login', async (req, res) => {
     const apiKey = process.env.FIREBASE_API_KEY;
     const loginUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
 
-    try {
-      const response = await fetch(loginUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, returnSecureToken: true })
-      });
+    const response = await fetch(loginUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true })
+    });
 
-      const data = await response.json();
+    const data = await response.json();
 
-      if (!response.ok) {
-        return res.status(401).json({ error: 'E-mail ou senha inválidos' });
-      }
-
-      res.status(200).json({
-        token: data.idToken,
-        email: data.email,
-        message: 'Login realizado com sucesso!'
-      });
-
-    } catch (authError) {
-      console.error('Erro ao autenticar com Firebase Auth:', authError);
-      res.status(401).json({ error: 'E-mail ou senha inválidos' });
+    if (!response.ok) {
+      return res.status(401).json({ error: 'E-mail ou senha inválidos' });
     }
+
+    res.status(200).json({
+      token: data.idToken,
+      email: data.email,
+      message: 'Login realizado com sucesso!'
+    });
+
   } catch (error) {
     console.error('Erro no login:', error);
     res.status(500).json({ error: 'Erro no servidor' });
@@ -256,7 +254,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
 
     const imagensURL = [];
 
-    if (req.files && req.files.length > 0) {
+    if (req.files && req.files.length > 0 && bucket) {
       for (let file of req.files) {
         const cleanedName = cleanFileName(file.originalname);
         const fileName = Date.now() + '_' + cleanedName;
@@ -300,7 +298,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
   } catch (error) {
     console.error('Erro ao cadastrar item:', error);
 
-    if (uploadedFilePaths.length > 0) {
+    if (uploadedFilePaths.length > 0 && bucket) {
       for (const filePath of uploadedFilePaths) {
         try {
           await bucket.file(filePath).delete();
@@ -343,7 +341,7 @@ app.put('/api/:tipo/:id', authenticateToken, async (req, res) => {
 
     const novasImagensLimpas = cleanUrls(imagens);
 
-    if (Array.isArray(dadosAntigos.imagens)) {
+    if (Array.isArray(dadosAntigos.imagens) && bucket) {
       for (const urlAntiga of dadosAntigos.imagens) {
         if (!novasImagensLimpas.includes(urlAntiga)) {
           const filePath = extractFilePath(urlAntiga);
@@ -408,7 +406,7 @@ app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
 
     const dados = docSnap.data();
 
-    if (Array.isArray(dados.imagens)) {
+    if (Array.isArray(dados.imagens) && bucket) {
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
         if (filePath) {
@@ -429,7 +427,7 @@ app.delete('/api/:tipo/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Inicia o servidor (Obrigatório para o server subir!)
+// Inicia o servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando em http://localhost:${PORT}`);
