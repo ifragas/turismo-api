@@ -64,7 +64,7 @@ const colecoesMap = {
   'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' }
 };
 
-// Esquema de validação com Joi atualizado
+// Esquema de validação com Joi atualizado (horarios flexível para suportar "sempre aberto" ou objetos livres)
 const itemSchema = Joi.object({
   nome: Joi.string().min(2).max(100).required().messages({
     'string.base': 'O campo nome deve ser uma string',
@@ -83,6 +83,7 @@ const itemSchema = Joi.object({
     Joi.array(),
     Joi.string()
   ).allow('', null),
+  sempreAberto: Joi.boolean().allow(null), // 🔹 Novo campo para suportar o estado de sempre aberto
   imagem: Joi.string().uri().allow('', null),
   imagens: Joi.array().items(Joi.string().uri()).allow(null)
 });
@@ -210,7 +211,7 @@ app.get('/api/:tipo', async (req, res) => {
   }
 });
 
-// POST dinâmico - Protegido por token, validação Joi, upload Multer e tratamento unificado de coordenadas e horários
+// POST dinâmico - Protegido por token, validação Joi, upload Multer e tratamento unificado de coordenadas e horários/sempreAberto
 app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -236,14 +237,20 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       }
     }
 
-    // Processamento do menu de horários (pode vir como JSON string ou objeto/array)
+    // Processamento do menu de horários
     let horarios = req.body.horarios;
     if (typeof horarios === 'string') {
       try {
         horarios = JSON.parse(horarios);
-      } catch (e) {
-        // mantém como string se não for JSON
-      }
+      } catch (e) {}
+    }
+
+    // Tratamento da flag sempreAberto (pode vir como boolean ou string "true"/"false")
+    let sempreAberto = req.body.sempreAberto;
+    if (typeof sempreAberto === 'string') {
+      sempreAberto = sempreAberto === 'true';
+    } else {
+      sempreAberto = Boolean(sempreAberto);
     }
 
     const bodyToValidate = {
@@ -251,7 +258,8 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
-      horarios: horarios || {}
+      horarios: horarios || {},
+      sempreAberto: sempreAberto
     };
 
     const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
@@ -291,6 +299,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       descricao: bodyToValidate.descricao,
       endereco: bodyToValidate.endereco,
       horarios: bodyToValidate.horarios,
+      sempreAberto: bodyToValidate.sempreAberto,
       coordenadas: bodyToValidate.coordenadas,
       latitude: latitude,
       longitude: longitude,
@@ -324,7 +333,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
   }
 });
 
-// PUT dinâmico - Protegido por token, validação Joi e atualização de coordenadas/horários estruturados
+// PUT dinâmico - Protegido por token, validação Joi e atualização de coordenadas/horários/sempreAberto
 app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -356,12 +365,20 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       } catch (e) {}
     }
 
+    let sempreAberto = req.body.sempreAberto;
+    if (typeof sempreAberto === 'string') {
+      sempreAberto = sempreAberto === 'true';
+    } else {
+      sempreAberto = Boolean(sempreAberto);
+    }
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
-      horarios: horarios || {}
+      horarios: horarios || {},
+      sempreAberto: sempreAberto
     };
 
     const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
@@ -425,6 +442,7 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       descricao: bodyToValidate.descricao,
       endereco: bodyToValidate.endereco,
       horarios: bodyToValidate.horarios,
+      sempreAberto: bodyToValidate.sempreAberto,
       coordenadas: bodyToValidate.coordenadas,
       latitude: latitude,
       longitude: longitude,
