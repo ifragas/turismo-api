@@ -64,7 +64,7 @@ const colecoesMap = {
   'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' }
 };
 
-// Esquema de validação com Joi para os itens de turismo
+// Esquema de validação com Joi atualizado
 const itemSchema = Joi.object({
   nome: Joi.string().min(2).max(100).required().messages({
     'string.base': 'O campo nome deve ser uma string',
@@ -77,11 +77,14 @@ const itemSchema = Joi.object({
     'any.required': 'O campo descrição é obrigatório'
   }),
   endereco: Joi.string().allow('', null),
-  horario: Joi.string().allow('', null),
+  coordenadas: Joi.string().allow('', null),
+  horarios: Joi.alternatives().try(
+    Joi.object(),
+    Joi.array(),
+    Joi.string()
+  ).allow('', null),
   imagem: Joi.string().uri().allow('', null),
-  imagens: Joi.array().items(Joi.string().uri()).allow(null),
-  latitude: Joi.number().allow(null),
-  longitude: Joi.number().allow(null)
+  imagens: Joi.array().items(Joi.string().uri()).allow(null)
 });
 
 // Função melhorada para extrair o caminho limpo da URL do Storage
@@ -207,7 +210,7 @@ app.get('/api/:tipo', async (req, res) => {
   }
 });
 
-// POST dinâmico - Protegido por token real, validação Joi e upload Multer (Admin Firestore)
+// POST dinâmico - Protegido por token, validação Joi, upload Multer e tratamento unificado de coordenadas e horários
 app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -219,13 +222,36 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
+    // Processamento e unificação das coordenadas ("lat, lng")
+    let latitude = null;
+    let longitude = null;
+    const coordenadasStr = req.body.coordenadas ? String(req.body.coordenadas).trim() : '';
+    if (coordenadasStr) {
+      const parts = coordenadasStr.split(',');
+      if (parts.length === 2) {
+        const parsedLat = parseFloat(parts[0].trim());
+        const parsedLng = parseFloat(parts[1].trim());
+        if (!isNaN(parsedLat)) latitude = parsedLat;
+        if (!isNaN(parsedLng)) longitude = parsedLng;
+      }
+    }
+
+    // Processamento do menu de horários (pode vir como JSON string ou objeto/array)
+    let horarios = req.body.horarios;
+    if (typeof horarios === 'string') {
+      try {
+        horarios = JSON.parse(horarios);
+      } catch (e) {
+        // mantém como string se não for JSON
+      }
+    }
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
-      horario: req.body.horario ? String(req.body.horario).trim() : '',
-      latitude: req.body.latitude !== '' && req.body.latitude != null ? Number(req.body.latitude) : null,
-      longitude: req.body.longitude !== '' && req.body.longitude != null ? Number(req.body.longitude) : null,
+      coordenadas: coordenadasStr,
+      horarios: horarios || {}
     };
 
     const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
@@ -264,12 +290,13 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       nome: bodyToValidate.nome,
       descricao: bodyToValidate.descricao,
       endereco: bodyToValidate.endereco,
-      horario: bodyToValidate.horario,
+      horarios: bodyToValidate.horarios,
+      coordenadas: bodyToValidate.coordenadas,
+      latitude: latitude,
+      longitude: longitude,
       imagem: primeiraImagemURL,
       imagens: cleanUrls(imagensURL),
       tipo: config.tipoNome,
-      latitude: bodyToValidate.latitude,
-      longitude: bodyToValidate.longitude,
       createdAt: new Date().toISOString()
     };
 
@@ -297,7 +324,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
   }
 });
 
-// PUT dinâmico - Protegido por token real, validado com Joi e sincronização de capa (Admin Firestore)
+// PUT dinâmico - Protegido por token, validação Joi e atualização de coordenadas/horários estruturados
 app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -309,13 +336,32 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
     }
 
+    let latitude = null;
+    let longitude = null;
+    const coordenadasStr = req.body.coordenadas ? String(req.body.coordenadas).trim() : '';
+    if (coordenadasStr) {
+      const parts = coordenadasStr.split(',');
+      if (parts.length === 2) {
+        const parsedLat = parseFloat(parts[0].trim());
+        const parsedLng = parseFloat(parts[1].trim());
+        if (!isNaN(parsedLat)) latitude = parsedLat;
+        if (!isNaN(parsedLng)) longitude = parsedLng;
+      }
+    }
+
+    let horarios = req.body.horarios;
+    if (typeof horarios === 'string') {
+      try {
+        horarios = JSON.parse(horarios);
+      } catch (e) {}
+    }
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
-      horario: req.body.horario ? String(req.body.horario).trim() : '',
-      latitude: req.body.latitude !== '' && req.body.latitude != null ? Number(req.body.latitude) : null,
-      longitude: req.body.longitude !== '' && req.body.longitude != null ? Number(req.body.longitude) : null,
+      coordenadas: coordenadasStr,
+      horarios: horarios || {}
     };
 
     const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
@@ -378,12 +424,13 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       nome: bodyToValidate.nome,
       descricao: bodyToValidate.descricao,
       endereco: bodyToValidate.endereco,
-      horario: bodyToValidate.horario,
+      horarios: bodyToValidate.horarios,
+      coordenadas: bodyToValidate.coordenadas,
+      latitude: latitude,
+      longitude: longitude,
       imagem: primeiraImagemURL,
       imagens: todasImagensLimpas,
       tipo: config.tipoNome,
-      latitude: bodyToValidate.latitude,
-      longitude: bodyToValidate.longitude,
       updatedAt: new Date().toISOString()
     };
 
