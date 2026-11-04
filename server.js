@@ -64,7 +64,7 @@ const colecoesMap = {
   'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' }
 };
 
-// Esquema de validação com Joi atualizado para suportar WhatsApp e Redes Sociais
+// Esquema de validação com Joi atualizado para suportar linkExterno
 const itemSchema = Joi.object({
   nome: Joi.string().min(2).max(100).required().messages({
     'string.base': 'O campo nome deve ser uma string',
@@ -78,6 +78,9 @@ const itemSchema = Joi.object({
   }),
   endereco: Joi.string().allow('', null),
   coordenadas: Joi.string().allow('', null),
+  linkExterno: Joi.string().uri().allow('', null).messages({
+    'string.uri': 'O link externo deve ser uma URL válida'
+  }),
   horarios: Joi.alternatives().try(
     Joi.object(),
     Joi.array(),
@@ -220,12 +223,16 @@ app.get('/api/:tipo', async (req, res) => {
   }
 });
 
-// POST dinâmico - Protegido por token, validação Joi, upload Multer e novos campos (WhatsApp e Redes Sociais)
+// POST dinâmico - Protegido por token, validação Joi, upload Multer e novos campos (incluindo linkExterno)
 app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
   try {
     const { tipo } = req.params;
+    // 🔍 ADICIONE ESTE CONSOLE.LOG AQUI:
+    console.log("📥 DADOS RECEBIDOS NO REQ.BODY:", req.body);
+    console.log("🔗 LINK EXTERNO RECEBIDO:", req.body.linkExterno);
+
     const config = colecoesMap[tipo];
 
     if (!config) {
@@ -289,11 +296,15 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       tiktok: redesSociais?.tiktok ? String(redesSociais.tiktok).trim() : ''
     };
 
+    // Processamento do Link Externo (Cardápio / Site)
+    let linkExterno = req.body.linkExterno ? String(req.body.linkExterno).trim() : '';
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
+      linkExterno: linkExterno,
       horarios: horarios || {},
       sempreAberto: sempreAberto,
       whatsapp: whatsapp,
@@ -336,6 +347,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       nome: bodyToValidate.nome,
       descricao: bodyToValidate.descricao,
       endereco: bodyToValidate.endereco,
+      linkExterno: bodyToValidate.linkExterno,
       horarios: bodyToValidate.horarios,
       sempreAberto: bodyToValidate.sempreAberto,
       whatsapp: bodyToValidate.whatsapp,
@@ -379,6 +391,9 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
 
   try {
     const { tipo, id } = req.params;
+    // 🔍 ADICIONE ESTE CONSOLE.LOG AQUI:
+    console.log("✏️ DADOS RECEBIDOS NO PUT (UPDATE):", req.body);
+    console.log("🔗 LINK EXTERNO NO PUT:", req.body.linkExterno);
     const config = colecoesMap[tipo];
 
     if (!config) {
@@ -437,11 +452,14 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       tiktok: redesSociais?.tiktok ? String(redesSociais.tiktok).trim() : ''
     };
 
+    let linkExterno = req.body.linkExterno ? String(req.body.linkExterno).trim() : '';
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
+      linkExterno: linkExterno,
       horarios: horarios || {},
       sempreAberto: sempreAberto,
       whatsapp: whatsapp,
@@ -508,6 +526,7 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       nome: bodyToValidate.nome,
       descricao: bodyToValidate.descricao,
       endereco: bodyToValidate.endereco,
+      linkExterno: bodyToValidate.linkExterno,
       horarios: bodyToValidate.horarios,
       sempreAberto: bodyToValidate.sempreAberto,
       whatsapp: bodyToValidate.whatsapp,
