@@ -64,7 +64,7 @@ const colecoesMap = {
   'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' }
 };
 
-// Esquema de validação com Joi atualizado (horarios flexível para suportar "sempre aberto" ou objetos livres)
+// Esquema de validação com Joi atualizado para suportar WhatsApp e Redes Sociais
 const itemSchema = Joi.object({
   nome: Joi.string().min(2).max(100).required().messages({
     'string.base': 'O campo nome deve ser uma string',
@@ -83,7 +83,16 @@ const itemSchema = Joi.object({
     Joi.array(),
     Joi.string()
   ).allow('', null),
-  sempreAberto: Joi.boolean().allow(null), // 🔹 Novo campo para suportar o estado de sempre aberto
+  sempreAberto: Joi.boolean().allow(null),
+  whatsapp: Joi.alternatives().try(
+    Joi.array().items(Joi.string()),
+    Joi.string()
+  ).allow('', null),
+  redesSociais: Joi.object({
+    instagram: Joi.string().allow('', null),
+    facebook: Joi.string().allow('', null),
+    tiktok: Joi.string().allow('', null)
+  }).allow('', null),
   imagem: Joi.string().uri().allow('', null),
   imagens: Joi.array().items(Joi.string().uri()).allow(null)
 });
@@ -211,7 +220,7 @@ app.get('/api/:tipo', async (req, res) => {
   }
 });
 
-// POST dinâmico - Protegido por token, validação Joi, upload Multer e tratamento unificado de coordenadas e horários/sempreAberto
+// POST dinâmico - Protegido por token, validação Joi, upload Multer e novos campos (WhatsApp e Redes Sociais)
 app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -245,7 +254,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       } catch (e) {}
     }
 
-    // Tratamento da flag sempreAberto (pode vir como boolean ou string "true"/"false")
+    // Tratamento da flag sempreAberto
     let sempreAberto = req.body.sempreAberto;
     if (typeof sempreAberto === 'string') {
       sempreAberto = sempreAberto === 'true';
@@ -253,13 +262,42 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       sempreAberto = Boolean(sempreAberto);
     }
 
+    // Processamento de WhatsApp (garante array de strings limpas)
+    let whatsapp = req.body.whatsapp;
+    if (typeof whatsapp === 'string') {
+      try {
+        whatsapp = JSON.parse(whatsapp);
+      } catch (e) {
+        whatsapp = whatsapp ? [whatsapp] : [];
+      }
+    }
+    if (!Array.isArray(whatsapp)) whatsapp = [];
+    whatsapp = whatsapp.map(num => String(num).trim()).filter(Boolean);
+
+    // Processamento de Redes Sociais
+    let redesSociais = req.body.redesSociais;
+    if (typeof redesSociais === 'string') {
+      try {
+        redesSociais = JSON.parse(redesSociais);
+      } catch (e) {
+        redesSociais = {};
+      }
+    }
+    redesSociais = {
+      instagram: redesSociais?.instagram ? String(redesSociais.instagram).trim() : '',
+      facebook: redesSociais?.facebook ? String(redesSociais.facebook).trim() : '',
+      tiktok: redesSociais?.tiktok ? String(redesSociais.tiktok).trim() : ''
+    };
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
       horarios: horarios || {},
-      sempreAberto: sempreAberto
+      sempreAberto: sempreAberto,
+      whatsapp: whatsapp,
+      redesSociais: redesSociais
     };
 
     const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
@@ -300,6 +338,8 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
       endereco: bodyToValidate.endereco,
       horarios: bodyToValidate.horarios,
       sempreAberto: bodyToValidate.sempreAberto,
+      whatsapp: bodyToValidate.whatsapp,
+      redesSociais: bodyToValidate.redesSociais,
       coordenadas: bodyToValidate.coordenadas,
       latitude: latitude,
       longitude: longitude,
@@ -333,7 +373,7 @@ app.post('/api/:tipo', authenticateToken, upload.array('imagens', 10), async (re
   }
 });
 
-// PUT dinâmico - Protegido por token, validação Joi e atualização de coordenadas/horários/sempreAberto
+// PUT dinâmico - Protegido por token, validação Joi e atualização completa
 app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async (req, res) => {
   let uploadedFilePaths = [];
 
@@ -372,13 +412,40 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       sempreAberto = Boolean(sempreAberto);
     }
 
+    let whatsapp = req.body.whatsapp;
+    if (typeof whatsapp === 'string') {
+      try {
+        whatsapp = JSON.parse(whatsapp);
+      } catch (e) {
+        whatsapp = whatsapp ? [whatsapp] : [];
+      }
+    }
+    if (!Array.isArray(whatsapp)) whatsapp = [];
+    whatsapp = whatsapp.map(num => String(num).trim()).filter(Boolean);
+
+    let redesSociais = req.body.redesSociais;
+    if (typeof redesSociais === 'string') {
+      try {
+        redesSociais = JSON.parse(redesSociais);
+      } catch (e) {
+        redesSociais = {};
+      }
+    }
+    redesSociais = {
+      instagram: redesSociais?.instagram ? String(redesSociais.instagram).trim() : '',
+      facebook: redesSociais?.facebook ? String(redesSociais.facebook).trim() : '',
+      tiktok: redesSociais?.tiktok ? String(redesSociais.tiktok).trim() : ''
+    };
+
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
       descricao: req.body.descricao ? String(req.body.descricao).trim() : '',
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
       horarios: horarios || {},
-      sempreAberto: sempreAberto
+      sempreAberto: sempreAberto,
+      whatsapp: whatsapp,
+      redesSociais: redesSociais
     };
 
     const { error } = itemSchema.validate(bodyToValidate, { abortEarly: false });
@@ -443,6 +510,8 @@ app.put('/api/:tipo/:id', authenticateToken, upload.array('imagens', 10), async 
       endereco: bodyToValidate.endereco,
       horarios: bodyToValidate.horarios,
       sempreAberto: bodyToValidate.sempreAberto,
+      whatsapp: bodyToValidate.whatsapp,
+      redesSociais: bodyToValidate.redesSociais,
       coordenadas: bodyToValidate.coordenadas,
       latitude: latitude,
       longitude: longitude,
