@@ -1,10 +1,12 @@
 const { db, bucket } = require('../config/firebase');
 const { itemSchema } = require('../validators/turismoValidator');
+const { servicosSchema } = require('../validators/servicosSchema');
 
 const colecoesMap = {
   'pontos-turisticos': { colecao: 'pontosTuristicos', tipoNome: 'Ponto Turístico' },
   'restaurantes': { colecao: 'restaurantes', tipoNome: 'Restaurante' },
-  'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' }
+  'acomodacoes': { colecao: 'acomodacoes', tipoNome: 'Acomodação' },
+  'servicos': { colecao: 'servicos', tipoNome: 'Serviço' }
 };
 
 // Funções Utilitárias Internas
@@ -33,6 +35,90 @@ const cleanFileName = (originalName) => {
     .replace(/[^a-zA-Z0-9.]/g, '_')
     .replace(/_{2,}/g, '_')
     .replace(/^_+|_+$/g, '');
+};
+
+const responderErroValidacao = (res, error) => {
+  return res.status(400).json({
+    error: 'Erro de validação',
+    detalhes: error.details.map(detail => detail.message)
+  });
+};
+
+const paraNumeroOpcional = (value) => {
+  if (value === undefined || value === '') return undefined;
+  if (value === null) return null;
+  if (typeof value === 'number') return value;
+  const parsed = Number(String(value).trim());
+  return Number.isNaN(parsed) ? value : parsed;
+};
+
+const normalizarImagens = (imagens) => {
+  if (imagens === undefined) return undefined;
+  if (imagens === null || imagens === '') return [];
+
+  let lista = imagens;
+  if (typeof imagens === 'string') {
+    const trimmed = imagens.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      lista = Array.isArray(parsed) ? parsed : [trimmed];
+    } catch (e) {
+      lista = [trimmed];
+    }
+  }
+
+  if (!Array.isArray(lista)) return lista;
+  return lista.map(item => (item == null ? '' : String(item).trim())).filter(Boolean);
+};
+
+const normalizarServico = (body = {}) => {
+  const payload = {};
+
+  if (body.nome !== undefined && body.nome !== null) payload.nome = String(body.nome).trim();
+  if (body.descricao !== undefined && body.descricao !== null) payload.descricao = String(body.descricao).trim();
+  if (body.tipoServico !== undefined && body.tipoServico !== null) {
+    payload.tipoServico = String(body.tipoServico).trim();
+  }
+  if (body.telefone !== undefined && body.telefone !== null) payload.telefone = String(body.telefone).trim();
+  if (body.whatsapp !== undefined && body.whatsapp !== null) payload.whatsapp = String(body.whatsapp).trim();
+  if (body.endereco !== undefined && body.endereco !== null) payload.endereco = String(body.endereco).trim();
+
+  const latitude = paraNumeroOpcional(body.latitude);
+  const longitude = paraNumeroOpcional(body.longitude);
+  if (latitude !== undefined) payload.latitude = latitude;
+  if (longitude !== undefined) payload.longitude = longitude;
+  if (body.funcionamento24h !== undefined) payload.funcionamento24h = body.funcionamento24h;
+
+  const imagens = normalizarImagens(body.imagens);
+  if (imagens !== undefined) payload.imagens = imagens;
+
+  return payload;
+};
+
+const validarServico = (body) => {
+  return servicosSchema.validate(normalizarServico(body), { abortEarly: false });
+};
+
+const enviarImagens = async (files, tipo, uploadedFilePaths) => {
+  const imagensURL = [];
+
+  if (files && files.length > 0 && bucket) {
+    for (const file of files) {
+      const cleanedName = cleanFileName(file.originalname);
+      const fileName = Date.now() + '_' + cleanedName;
+      const filePath = `imagens/${tipo}/${fileName}`;
+      const fileRef = bucket.file(filePath);
+
+      await fileRef.save(file.buffer, { metadata: { contentType: file.mimetype } });
+      uploadedFilePaths.push(filePath);
+
+      const encodedPath = encodeURIComponent(filePath);
+      imagensURL.push(`https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media`);
+    }
+  }
+
+  return imagensURL;
 };
 
 // 1. LOGIN
@@ -108,6 +194,25 @@ const criarItem = async (req, res) => {
 
     if (!config) {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
+    }
+
+    if (tipo === 'servicos') {
+      const { error, value } = validarServico(req.body);
+      if (error) {
+        return responderErroValidacao(res, error);
+      }
+
+      const imagensEnviadas = await enviarImagens(req.files, tipo, uploadedFilePaths);
+      const imagens = [...(value.imagens || []), ...imagensEnviadas];
+      const dadosNovoItem = {
+        ...value,
+        imagens,
+        tipo: config.tipoNome,
+        createdAt: new Date().toISOString()
+      };
+
+      const docRef = await db.collection(config.colecao).add(dadosNovoItem);
+      return res.status(201).json({ id: docRef.id, ...dadosNovoItem });
     }
 
     // Coordenadas
@@ -232,6 +337,47 @@ const atualizarItem = async (req, res) => {
 
     if (!config) {
       return res.status(400).json({ error: 'Tipo de coleção inválido' });
+    }
+
+    if (tipo === 'servicos') {
+      const { error, value } = validarServico(req.body);
+      if (error) {
+        return responderErroValidacao(res, error);
+      }
+
+      const docRef = db.collection(config.colecao).doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: 'Documento não encontrado' });
+      }
+      const dadosAntigos = docSnap.data();
+
+      const imagensInformadas = Object.prototype.hasOwnProperty.call(req.body, 'imagens')
+        ? (value.imagens || [])
+        : (Array.isArray(dadosAntigos.imagens) ? dadosAntigos.imagens : []);
+
+      if (Array.isArray(dadosAntigos.imagens) && bucket) {
+        for (const urlAntiga of dadosAntigos.imagens) {
+          if (!imagensInformadas.includes(urlAntiga)) {
+            const filePath = extractFilePath(urlAntiga);
+            if (filePath) {
+              try { await bucket.file(filePath).delete(); } catch (delErr) {}
+            }
+          }
+        }
+      }
+
+      const novasImagensURL = await enviarImagens(req.files, tipo, uploadedFilePaths);
+      const imagens = [...imagensInformadas, ...novasImagensURL];
+      const dadosAtualizados = {
+        ...value,
+        imagens,
+        tipo: config.tipoNome,
+        updatedAt: new Date().toISOString()
+      };
+
+      await docRef.update(dadosAtualizados);
+      return res.status(200).json({ id, ...dadosAtualizados });
     }
 
     let latitude = null;

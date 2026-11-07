@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Escrita bloqueada de proposito: o frontend (painel e app) nao pode
+    // criar, editar ou excluir documentos direto no Firestore.
+    // Toda mutacao passa pela API Node.js, que usa o Admin SDK.
+    // O Admin SDK ignora estas regras e aplica a autorizacao no servidor,
+    // onde a operacao pode ser validada e auditada.
+    // A leitura permanece publica para o app mobile consultar os dados.
+    match /{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

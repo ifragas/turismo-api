@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Mesma politica do Firestore: leitura publica para o app mobile
+    // exibir arquivos, e escrita bloqueada no cliente.
+    // Upload, substituicao e exclusao so ocorrem pela API Node.js
+    // (Admin SDK), que ignora estas regras.
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
