@@ -1,3 +1,4 @@
+// src/validators/servicosSchema.js
 const Joi = require('joi');
 
 const TIPOS_SERVICO = [
@@ -36,6 +37,9 @@ const servicosSchema = Joi.object({
   endereco: Joi.string().trim().allow('', null).optional().messages({
     'string.base': 'O campo endereço deve ser uma string'
   }),
+  coordenadas: Joi.string().trim().allow('', null).optional().messages({
+    'string.base': 'O campo coordenadas deve ser uma string'
+  }),
   latitude: Joi.number().allow(null).optional().messages({
     'number.base': 'O campo latitude deve ser um número'
   }),
@@ -44,6 +48,25 @@ const servicosSchema = Joi.object({
   }),
   funcionamento24h: Joi.boolean().default(false).messages({
     'boolean.base': 'O campo funcionamento24h deve ser verdadeiro ou falso'
+  }),
+  linkExterno: Joi.string().trim().allow('', null).optional().messages({
+    'string.base': 'O campo linkExterno deve ser uma string'
+  }),
+  redesSociais: Joi.object({
+    instagram: Joi.string().trim().allow('', null).optional(),
+    facebook: Joi.string().trim().allow('', null).optional(),
+    tiktok: Joi.string().trim().allow('', null).optional()
+  }).optional().messages({
+    'object.base': 'O campo redesSociais deve ser um objeto'
+  }),
+  horarios: Joi.object().pattern(
+    Joi.string(),
+    Joi.object({
+      abertura: Joi.string().required(),
+      fecho: Joi.string().required()
+    })
+  ).optional().messages({
+    'object.base': 'O campo horarios deve ser um objeto'
   }),
   imagens: Joi.array().items(Joi.string().trim()).allow(null).optional().messages({
     'array.base': 'O campo imagens deve ser uma lista de textos'

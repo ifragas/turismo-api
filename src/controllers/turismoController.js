@@ -72,6 +72,7 @@ const normalizarImagens = (imagens) => {
   return lista.map(item => (item == null ? '' : String(item).trim())).filter(Boolean);
 };
 
+// ✅ CORREÇÃO AQUI: Adicionados coordenadas, linkExterno, redesSociais e horarios
 const normalizarServico = (body = {}) => {
   const payload = {};
 
@@ -83,12 +84,31 @@ const normalizarServico = (body = {}) => {
   if (body.telefone !== undefined && body.telefone !== null) payload.telefone = String(body.telefone).trim();
   if (body.whatsapp !== undefined && body.whatsapp !== null) payload.whatsapp = String(body.whatsapp).trim();
   if (body.endereco !== undefined && body.endereco !== null) payload.endereco = String(body.endereco).trim();
+  if (body.coordenadas !== undefined && body.coordenadas !== null) payload.coordenadas = String(body.coordenadas).trim();
+  if (body.linkExterno !== undefined && body.linkExterno !== null) payload.linkExterno = String(body.linkExterno).trim();
 
   const latitude = paraNumeroOpcional(body.latitude);
   const longitude = paraNumeroOpcional(body.longitude);
   if (latitude !== undefined) payload.latitude = latitude;
   if (longitude !== undefined) payload.longitude = longitude;
   if (body.funcionamento24h !== undefined) payload.funcionamento24h = body.funcionamento24h;
+
+  // Parse de JSON para objetos complexos vindos do FormData
+  if (body.redesSociais !== undefined) {
+    if (typeof body.redesSociais === 'string') {
+      try { payload.redesSociais = JSON.parse(body.redesSociais); } catch (e) { payload.redesSociais = {}; }
+    } else {
+      payload.redesSociais = body.redesSociais;
+    }
+  }
+
+  if (body.horarios !== undefined) {
+    if (typeof body.horarios === 'string') {
+      try { payload.horarios = JSON.parse(body.horarios); } catch (e) { payload.horarios = {}; }
+    } else {
+      payload.horarios = body.horarios;
+    }
+  }
 
   const imagens = normalizarImagens(body.imagens);
   if (imagens !== undefined) payload.imagens = imagens;
@@ -369,6 +389,8 @@ const atualizarItem = async (req, res) => {
 
       const novasImagensURL = await enviarImagens(req.files, tipo, uploadedFilePaths);
       const imagens = [...imagensInformadas, ...novasImagensURL];
+      
+      // ✅ CORREÇÃO AQUI: Garante que os campos normalizados sejam salvos
       const dadosAtualizados = {
         ...value,
         imagens,
