@@ -16,6 +16,9 @@ const itemSchema = Joi.object({
   linkExterno: Joi.string().uri().allow('', null).messages({
     'string.uri': 'O link externo deve ser uma URL válida'
   }),
+  telefone: Joi.string().allow('', null).messages({ // ✅ ADICIONADO
+    'string.base': 'O campo telefone deve ser uma string'
+  }),
   horarios: Joi.alternatives().try(
     Joi.object(),
     Joi.array(),

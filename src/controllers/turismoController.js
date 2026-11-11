@@ -72,7 +72,6 @@ const normalizarImagens = (imagens) => {
   return lista.map(item => (item == null ? '' : String(item).trim())).filter(Boolean);
 };
 
-// ✅ CORREÇÃO AQUI: Adicionados coordenadas, linkExterno, redesSociais e horarios
 const normalizarServico = (body = {}) => {
   const payload = {};
 
@@ -93,7 +92,6 @@ const normalizarServico = (body = {}) => {
   if (longitude !== undefined) payload.longitude = longitude;
   if (body.funcionamento24h !== undefined) payload.funcionamento24h = body.funcionamento24h;
 
-  // Parse de JSON para objetos complexos vindos do FormData
   if (body.redesSociais !== undefined) {
     if (typeof body.redesSociais === 'string') {
       try { payload.redesSociais = JSON.parse(body.redesSociais); } catch (e) { payload.redesSociais = {}; }
@@ -283,6 +281,7 @@ const criarItem = async (req, res) => {
     };
 
     let linkExterno = req.body.linkExterno ? String(req.body.linkExterno).trim() : '';
+    let telefone = req.body.telefone ? String(req.body.telefone).trim() : ''; // ✅ ADICIONADO: Leitura do telefone
 
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
@@ -290,6 +289,7 @@ const criarItem = async (req, res) => {
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
       linkExterno: linkExterno,
+      telefone: telefone, // ✅ ADICIONADO: Inclusão no objeto de validação
       horarios: horarios || {},
       sempreAberto: sempreAberto,
       whatsapp: whatsapp,
@@ -390,7 +390,6 @@ const atualizarItem = async (req, res) => {
       const novasImagensURL = await enviarImagens(req.files, tipo, uploadedFilePaths);
       const imagens = [...imagensInformadas, ...novasImagensURL];
       
-      // ✅ CORREÇÃO AQUI: Garante que os campos normalizados sejam salvos
       const dadosAtualizados = {
         ...value,
         imagens,
@@ -445,6 +444,7 @@ const atualizarItem = async (req, res) => {
     };
 
     let linkExterno = req.body.linkExterno ? String(req.body.linkExterno).trim() : '';
+    let telefone = req.body.telefone ? String(req.body.telefone).trim() : ''; // ✅ ADICIONADO: Leitura do telefone
 
     const bodyToValidate = {
       nome: req.body.nome ? String(req.body.nome).trim() : '',
@@ -452,6 +452,7 @@ const atualizarItem = async (req, res) => {
       endereco: req.body.endereco ? String(req.body.endereco).trim() : '',
       coordenadas: coordenadasStr,
       linkExterno: linkExterno,
+      telefone: telefone, // ✅ ADICIONADO: Inclusão no objeto de validação
       horarios: horarios || {},
       sempreAberto: sempreAberto,
       whatsapp: whatsapp,
