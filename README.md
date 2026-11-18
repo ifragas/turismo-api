@@ -1,57 +1,83 @@
-🚀 API REST - Aplicativo de Turismo
-API backend robusta, segura e escalável desenvolvida para gerenciar dados de turismo (pontos turísticos, restaurantes e acomodações), construída em Node.js com integração ao Firebase.
+# 🚀 FF Tech Lab - API REST Multi-Tenant de Turismo
 
-🛠️ Tecnologias Utilizadas
-Node.js & Express: Construção da arquitetura da API e roteamento dinâmico.
+API backend robusta, segura e escalável desenvolvida para gerenciar o ecossistema de turismo digital (Guia da Cidade / Smart Turismo). Construída em Node.js com integração ao Firebase, esta API evoluiu de um sistema monolítico para uma **arquitetura SaaS Multi-Tenant** completa.
 
-Firebase (Firestore & Storage): Banco de dados NoSQL em tempo real e armazenamento seguro de arquivos de mídia.
+## 🏗️ Arquitetura e Diferenciais Técnicos
 
-Firebase Auth: Proteção e autenticação de rotas por token.
+- **Multi-Tenant Nativo:** Todos os dados são isolados por `cidadeId`. O backend filtra, injeta e valida o tenant em TODAS as operações de CRUD.
+- **RBAC Avançado (Role-Based Access Control):** 
+  - `super_admin`: Acesso global e gestão de infraestrutura.
+  - `city_admin` / `editor`: Acesso estritamente restrito ao `cidadeId` vinculado às suas Custom Claims no JWT.
+- **Padrão Gateway Seguro:** O frontend NUNCA escreve diretamente no Firestore. Todas as mutações passam pela API, onde o middleware `requireRole` valida as permissões antes de qualquer operação.
+- **Admin SDK Integrado:** Gerenciamento de usuários, cidades e custom claims feito via backend seguro, eliminando a dependência do Console Web do Firebase.
+- **Rotas Dinâmicas Genéricas:** Utilização de dicionário unificado (`colecoesMap`) para lidar com categorias (Pontos Turísticos, Restaurantes, Acomodações, Serviços) de forma limpa e escalável.
+- **Resiliência de Erros:** Tratamento inteligente de respostas não-JSON e exclusão automática de arquivos órfãos no Firebase Storage.
 
-Joi: Validação rigorosa de dados de entrada.
+## 🛠️ Tecnologias Utilizadas
 
-Express Rate Limit: Proteção contra ataques de força bruta e spam por IP.
+- **Node.js & Express:** Arquitetura MVC modular e roteamento dinâmico.
+- **Firebase Admin SDK:** Autenticação, Firestore, Storage e gerenciamento de Custom Claims.
+- **Joi:** Validação rigorosa e tipada de dados de entrada.
+- **Express Rate Limit:** Proteção contra ataques de força bruta e spam por IP.
+- **Multer:** Processamento eficiente de uploads multipart/form-data.
+- **Jest & Supertest:** Framework de testes automatizados para garantia de qualidade contínua.
 
-Jest & Supertest: Framework de testes automatizados para garantia de qualidade.
+## 📡 Endpoints da API
 
-📂 Arquitetura e Diferenciais
-Rotas Dinâmicas por Parâmetro (:tipo): O sistema utiliza um dicionário unificado (colecoesMap) para lidar com diferentes categorias (pontos turísticos, restaurantes, acomodações) de forma genérica e limpa, eliminando código duplicado.
+### Rotas Públicas e de Conteúdo
+| Método | Rota | Descrição | Autenticação |
+| :--- | :--- | :--- | :--- |
+| GET | `/api/login` | Autenticação administrativa | Pública |
+| GET | `/api/:tipo` | Lista itens da categoria (filtrado por cidade se logado) | Optional Auth |
+| POST | `/api/:tipo` | Cadastra novo item (injeção automática de cidadeId) | Bearer Token + Role |
+| PUT | `/api/:tipo/:id` | Atualiza item (validação de propriedade por cidade) | Bearer Token + Role |
+| DELETE | `/api/:tipo/:id` | Remove item e limpa Storage (proteção por cidade) | Bearer Token + Role |
 
-Paginação e Ordenação: Suporte a parâmetros de consulta (?limit=X) e ordenação automática por data de criação (createdAt).
+### Rotas Administrativas (Exigem `super_admin`)
+| Método | Rota | Descrição |
+| :--- | :--- | :--- |
+| GET | `/api/admin/cidades` | Lista todos os municípios cadastrados |
+| POST | `/api/admin/cidades` | Cria nova cidade (slug, cores, flags) |
+| PUT | `/api/admin/cidades/:slug` | Atualiza configurações da cidade |
+| DELETE | `/api/admin/cidades/:slug` | Exclui cidade (verifica integridade) |
+| GET | `/api/admin/usuarios` | Lista todos os usuários e suas claims |
+| POST | `/api/admin/usuarios` | Cria usuário e atribui role/cidade |
+| PUT | `/api/admin/usuarios/:uid` | Atualiza permissões de um usuário |
+| DELETE | `/api/admin/usuarios/:uid` | Exclui usuário (bloqueio de auto-exclusão) |
 
-Gestão Inteligente de Mídia: Exclusão automática de arquivos associados no Firebase Storage ao apagar um registro.
+## ⚙️ Como Executar o Projeto Localmente
 
-📡 Endpoints da API
+1. Clone o repositório:
+   ```bash
+   git clone https://github.com/ifragas/turismo-api.git
+   cd turismo-api
 
-Método	Rota	Descrição	Autenticação
-GET	/api/:tipo	Lista os itens da categoria (com paginação opcional)	Pública
+2. Instale as dependências:
+   ```bash
+   npm install
 
-POST	/api/:tipo	Cadastra um novo item com validação Joi	Requer Token (Bearer)
+3. Configure as variáveis de ambiente:
+   Crie um arquivo .env na raiz do projeto baseado no .env.example. Você precisará das credenciais do seu projeto Firebase:
 
-PUT	/api/:tipo/:id	Atualiza um item existente	Requer Token (Bearer)
+   PORT=3000
+   FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account", ... }' # Cole o JSON do Admin SDK aqui (em uma linha)
+   FIREBASE_STORAGE_BUCKET=seu-bucket.appspot.com
+   FIREBASE_API_KEY=sua_api_key_do_firebase
 
-DELETE	/api/:tipo/:id	Remove o item do banco e limpa arquivos do Storage	Requer Token (Bearer)
+   Nunca commite o arquivo .env ou firebase.adminsdk.json. Eles já estão protegidos pelo .gitignore.
 
-⚙️ Como Executar o Projeto Localmente
-Clone o repositório:
+4. Inicie o servidor em modo de desenvolvimento:
+   ```bash
+   npm run dev
 
-Bash
+5. Para rodar os testes automatizados:
+   ```bash
+   npm test
 
-git clone https://github.com/ifragas/turismo-api.git
-Instale as dependências:
+🔒 Notas de Segurança e Deploy
 
-Bash
+- Variáveis de Ambiente em Produção: Ao fazer deploy (ex: Render), utilize a variável FIREBASE_SERVICE_ACCOUNT_JSON para colar o conteúdo do arquivo de credenciais. Nunca suba o arquivo físico .json para o servidor.
 
-npm install
-Configure as variáveis de ambiente com as credenciais do seu projeto Firebase.
+- Blindagem de Dados: Mesmo que um atacante tente manipular o payload no frontend, o backend sobrescreve o cidadeId com base no token JWT assinado pelo Firebase, tornando impossível cruzar dados entre tenants.
 
-Inicie o servidor em modo de desenvolvimento:
-
-Bash
-
-npm run dev
-Para rodar os testes automatizados:
-
-Bash
-
-npm test
+- Proteção de Infraestrutura: As rotas /api/admin/* possuem middleware composto que exige autenticação E a role específica super_admin. Tentativas de acesso direto retornam 403 Forbidden.
