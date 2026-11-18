@@ -1,8 +1,11 @@
+// src/server.js
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const rateLimit = require('express-rate-limit');
+
 const turismoRoutes = require('./src/routes/turismoRoutes');
+const adminRoutes = require('./src/routes/adminRoutes'); // <-- NOVO
 
 const app = express();
 
@@ -40,6 +43,7 @@ app.get('/', (req, res) => {
 
 // Carrega as rotas da aplicação
 app.use('/api', turismoRoutes);
+app.use('/api/admin', adminRoutes); // <-- NOVO: Monta as rotas em /api/admin/...
 
 // Inicia o servidor
 const PORT = process.env.PORT || 3000;

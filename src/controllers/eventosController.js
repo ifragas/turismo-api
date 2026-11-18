@@ -1,10 +1,8 @@
-// src/controllers/eventosController.js
 const { db, bucket } = require('../config/firebase');
 const { eventosSchema } = require('../validators/eventosSchema');
 const { calcularProximaOcorrencia, descreverRecorrencia } = require('../utils/eventosHelper');
 
 const COLECAO = 'eventos';
-
 const colecoesMap = {
   'pontos-turisticos': 'pontosTuristicos',
   'restaurantes': 'restaurantes',
@@ -13,7 +11,6 @@ const colecoesMap = {
 };
 
 // ---------- Utilitários ----------
-
 const extractFilePath = (url) => {
   if (!url) return null;
   try {
@@ -23,12 +20,7 @@ const extractFilePath = (url) => {
   return null;
 };
 
-const cleanFileName = (originalName) => originalName
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .replace(/[^a-zA-Z0-9.]/g, '_')
-  .replace(/_{2,}/g, '_')
-  .replace(/^_+|_+$/g, '');
+const cleanFileName = (originalName) => originalName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9.]/g, '_').replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '');
 
 const paraBooleano = (v, padrao = false) => {
   if (v === undefined || v === null || v === '') return padrao;
@@ -46,10 +38,8 @@ const normalizarLista = (v) => {
   if (v === undefined || v === null || v === '') return [];
   let lista = v;
   if (typeof v === 'string') {
-    try {
-      const parsed = JSON.parse(v);
-      lista = Array.isArray(parsed) ? parsed : [v];
-    } catch (e) { lista = [v]; }
+    try { const parsed = JSON.parse(v); lista = Array.isArray(parsed) ? parsed : [v]; } 
+    catch (e) { lista = [v]; }
   }
   if (!Array.isArray(lista)) return [];
   return lista.map(x => String(x).trim()).filter(Boolean);
@@ -64,7 +54,6 @@ const normalizarObjeto = (v) => {
 const texto = (v) => (v === undefined || v === null) ? '' : String(v).trim();
 
 // ---------- Normalização do payload ----------
-
 const normalizarEvento = (body = {}) => {
   const payload = {
     titulo: texto(body.titulo),
@@ -88,7 +77,6 @@ const normalizarEvento = (body = {}) => {
     cidade: texto(body.cidade) || 'rolante'
   };
 
-  // Coordenadas: usa o campo unificado se latitude/longitude não vierem
   let lat = paraNumeroOpcional(body.latitude);
   let lng = paraNumeroOpcional(body.longitude);
   if ((lat === null || lng === null) && payload.coordenadas.includes(',')) {
@@ -108,7 +96,6 @@ const normalizarEvento = (body = {}) => {
 const validarEvento = (payload) => {
   const { error, value } = eventosSchema.validate(payload, { abortEarly: false });
   if (error) return { error };
-
   if (value.dataFim && new Date(value.dataFim) < new Date(value.dataInicio)) {
     return { error: { details: [{ message: 'A data de fim não pode ser anterior à data de início' }] } };
   }
@@ -118,20 +105,15 @@ const validarEvento = (payload) => {
   return { value };
 };
 
-const responderErroValidacao = (res, error) => res.status(400).json({
-  error: 'Erro de validação',
-  detalhes: error.details.map(d => d.message)
-});
+const responderErroValidacao = (res, error) => res.status(400).json({ error: 'Erro de validação', detalhes: error.details.map(d => d.message) });
 
 // ---------- Resolução do local vinculado ----------
-
 const criarResolvedorLocal = () => {
   const cache = new Map();
   return async (localVinculado) => {
     if (!localVinculado?.tipo || !localVinculado?.id) return null;
     const colecao = colecoesMap[localVinculado.tipo];
     if (!colecao) return null;
-
     const chave = `${colecao}/${localVinculado.id}`;
     if (cache.has(chave)) return cache.get(chave);
 
@@ -141,29 +123,20 @@ const criarResolvedorLocal = () => {
       if (snap.exists) {
         const d = snap.data();
         dados = {
-          id: snap.id,
-          tipo: localVinculado.tipo,
-          nome: d.nome || '',
-          endereco: d.endereco || '',
-          coordenadas: d.coordenadas || '',
-          latitude: d.latitude ?? null,
-          longitude: d.longitude ?? null,
+          id: snap.id, tipo: localVinculado.tipo, nome: d.nome || '', endereco: d.endereco || '',
+          coordenadas: d.coordenadas || '', latitude: d.latitude ?? null, longitude: d.longitude ?? null,
           imagem: d.imagem || (Array.isArray(d.imagens) ? d.imagens[0] : '') || ''
         };
       }
-    } catch (e) {
-      console.error('Erro ao resolver local vinculado:', e.message);
-    }
+    } catch (e) { console.error('Erro ao resolver local vinculado:', e.message); }
     cache.set(chave, dados);
     return dados;
   };
 };
 
-// Aplica dados do local vinculado sem sobrescrever o que foi digitado manualmente
 const aplicarLocalVinculado = async (evento, resolver) => {
   const vinculado = await resolver(evento.localVinculado);
   if (!vinculado) return { ...evento, localVinculadoDados: null };
-
   return {
     ...evento,
     local: evento.local || vinculado.nome,
@@ -176,11 +149,9 @@ const aplicarLocalVinculado = async (evento, resolver) => {
 };
 
 // ---------- Upload de imagens ----------
-
 const enviarImagens = async (files, uploadedFilePaths) => {
   const urls = [];
   if (!files?.length || !bucket) return urls;
-
   for (const file of files) {
     const fileName = `${Date.now()}_${cleanFileName(file.originalname)}`;
     const filePath = `imagens/eventos/${fileName}`;
@@ -193,29 +164,41 @@ const enviarImagens = async (files, uploadedFilePaths) => {
 
 const limparUploads = async (paths) => {
   if (!bucket) return;
-  for (const p of paths) {
-    try { await bucket.file(p).delete(); } catch (e) { /* ignora */ }
-  }
+  for (const p of paths) { try { await bucket.file(p).delete(); } catch (e) { /* ignora */ } }
 };
 
-// ---------- 1. LISTAR ----------
-
+// ---------- 1. LISTAR - BLINDADO POR CIDADE ----------
 const listarEventos = async (req, res) => {
   try {
     const incluirPassados = String(req.query.incluirPassados) === 'true';
     const apenasDestaque = String(req.query.destaque) === 'true';
-    const cidade = req.query.cidade ? String(req.query.cidade).trim() : null;
     const categoria = req.query.categoria ? String(req.query.categoria).trim() : null;
     const agora = new Date();
 
-    const snapshot = await db.collection(COLECAO).get();
-    const resolver = criarResolvedorLocal();
+    console.log('🔍 DEBUG listarEventos - req.user:', req.user ? req.user.role : 'null (público)');
 
+    let query = db.collection(COLECAO);
+
+    // 🔒 BLINDAGEM: Filtra no banco baseado no usuário logado
+    if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
+      console.log('✅ Filtro aplicado: cidadeId ==', req.user.cidadeId);
+      query = query.where('cidadeId', '==', req.user.cidadeId);
+    } else if (req.user && req.user.role === 'super_admin' && req.query.cidadeId) {
+      console.log('✅ Filtro super_admin: cidadeId ==', req.query.cidadeId);
+      query = query.where('cidadeId', '==', req.query.cidadeId);
+    } else if (!req.user && req.query.cidadeId) {
+      console.log('✅ Filtro público por query: cidadeId ==', req.query.cidadeId);
+      query = query.where('cidadeId', '==', req.query.cidadeId);
+    } else {
+      console.log('⚠️ Acesso Global de Administrador. Retornando tudo.');
+    }
+
+    const snapshot = await query.get();
+    const resolver = criarResolvedorLocal();
     let lista = [];
+
     for (const doc of snapshot.docs) {
       const dados = { id: doc.id, ...doc.data() };
-
-      if (cidade && dados.cidade && dados.cidade !== cidade) continue;
       if (categoria && dados.categoria !== categoria) continue;
       if (apenasDestaque && dados.destaque !== true) continue;
 
@@ -223,16 +206,10 @@ const listarEventos = async (req, res) => {
       if (!ocorrencia && !incluirPassados) continue;
 
       const enriquecido = await aplicarLocalVinculado(dados, resolver);
-
       lista.push({
         ...enriquecido,
-        proximaOcorrencia: ocorrencia ? {
-          inicio: ocorrencia.inicio.toISOString(),
-          fim: ocorrencia.fim.toISOString()
-        } : null,
-        acontecendoAgora: ocorrencia
-          ? ocorrencia.inicio <= agora && agora <= ocorrencia.fim
-          : false,
+        proximaOcorrencia: ocorrencia ? { inicio: ocorrencia.inicio.toISOString(), fim: ocorrencia.fim.toISOString() } : null,
+        acontecendoAgora: ocorrencia ? ocorrencia.inicio <= agora && agora <= ocorrencia.fim : false,
         recorrenciaDescricao: descreverRecorrencia(dados),
         encerrado: !ocorrencia
       });
@@ -255,14 +232,20 @@ const listarEventos = async (req, res) => {
 };
 
 // ---------- 2. BUSCAR UM ----------
-
 const buscarEvento = async (req, res) => {
   try {
     const { id } = req.params;
     const snap = await db.collection(COLECAO).doc(id).get();
     if (!snap.exists) return res.status(404).json({ error: 'Evento não encontrado' });
 
+    // 🔒 BLINDAGEM: Verifica permissão de leitura
     const dados = { id: snap.id, ...snap.data() };
+    if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
+      if (dados.cidadeId !== req.user.cidadeId) {
+        return res.status(403).json({ error: 'Acesso negado: Evento não pertence à sua cidade.' });
+      }
+    }
+
     const resolver = criarResolvedorLocal();
     const enriquecido = await aplicarLocalVinculado(dados, resolver);
     const agora = new Date();
@@ -270,10 +253,7 @@ const buscarEvento = async (req, res) => {
 
     res.json({
       ...enriquecido,
-      proximaOcorrencia: ocorrencia ? {
-        inicio: ocorrencia.inicio.toISOString(),
-        fim: ocorrencia.fim.toISOString()
-      } : null,
+      proximaOcorrencia: ocorrencia ? { inicio: ocorrencia.inicio.toISOString(), fim: ocorrencia.fim.toISOString() } : null,
       acontecendoAgora: ocorrencia ? ocorrencia.inicio <= agora && agora <= ocorrencia.fim : false,
       recorrenciaDescricao: descreverRecorrencia(dados),
       encerrado: !ocorrencia
@@ -284,19 +264,22 @@ const buscarEvento = async (req, res) => {
   }
 };
 
-// ---------- 3. CRIAR ----------
-
+// ---------- 3. CRIAR - INJEÇÃO FORÇADA DE cidadeId ----------
 const criarEvento = async (req, res) => {
   const uploadedFilePaths = [];
   try {
     const { error, value } = validarEvento(normalizarEvento(req.body));
     if (error) return responderErroValidacao(res, error);
 
+    // 🔒 Define o cidadeId com base no usuário logado
+    const cidadeIdParaSalvar = (req.user.role === 'super_admin') ? (req.body.cidadeId || 'rolante') : (req.user.cidadeId || 'rolante');
+
     const novasUrls = await enviarImagens(req.files, uploadedFilePaths);
     const imagens = [...(value.imagens || []), ...novasUrls];
 
     const novoEvento = {
       ...value,
+      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO
       imagens,
       imagem: imagens[0] || '',
       createdAt: new Date().toISOString()
@@ -311,8 +294,7 @@ const criarEvento = async (req, res) => {
   }
 };
 
-// ---------- 4. ATUALIZAR ----------
-
+// ---------- 4. ATUALIZAR - VERIFICAÇÃO DE PROPRIEDADE ----------
 const atualizarEvento = async (req, res) => {
   const uploadedFilePaths = [];
   try {
@@ -326,6 +308,16 @@ const atualizarEvento = async (req, res) => {
 
     const antigos = snap.data();
 
+    // 🔒 BLINDAGEM: Verifica se o usuário tem permissão para editar esta cidade
+    if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
+      if (antigos.cidadeId !== req.user.cidadeId) {
+        return res.status(403).json({ error: 'Acesso negado: Você não pode editar eventos desta cidade.' });
+      }
+    }
+
+    // Força o cidadeId a permanecer o mesmo
+    const cidadeIdParaSalvar = antigos.cidadeId || (req.user.cidadeId || 'rolante');
+
     let imagensExistentes = req.body.imagensExistentes;
     if (imagensExistentes === undefined) {
       imagensExistentes = Array.isArray(antigos.imagens) ? antigos.imagens : [];
@@ -337,9 +329,7 @@ const atualizarEvento = async (req, res) => {
       for (const urlAntiga of antigos.imagens) {
         if (!imagensExistentes.includes(urlAntiga)) {
           const filePath = extractFilePath(urlAntiga);
-          if (filePath) {
-            try { await bucket.file(filePath).delete(); } catch (e) { /* ignora */ }
-          }
+          if (filePath) { try { await bucket.file(filePath).delete(); } catch (e) { /* ignora */ } }
         }
       }
     }
@@ -349,6 +339,7 @@ const atualizarEvento = async (req, res) => {
 
     const atualizado = {
       ...value,
+      cidadeId: cidadeIdParaSalvar, // 🔒 MANTÉM A CIDADE ORIGINAL
       imagens,
       imagem: imagens[0] || '',
       updatedAt: new Date().toISOString()
@@ -363,37 +354,60 @@ const atualizarEvento = async (req, res) => {
   }
 };
 
-// ---------- 5. EXCLUIR ----------
-
+// ---------- 5. EXCLUIR - BLINDADO COM LOGS ----------
 const deletarEvento = async (req, res) => {
+  console.log('🗑️ DEBUG deletarEvento - Iniciando. Params:', req.params);
+  console.log('🗑️ DEBUG deletarEvento - User:', req.user ? { role: req.user.role, cidadeId: req.user.cidadeId } : 'Sem user');
+
   try {
     const { id } = req.params;
     const docRef = db.collection(COLECAO).doc(id);
     const snap = await docRef.get();
-    if (!snap.exists) return res.status(404).json({ error: 'Evento não encontrado' });
+    
+    if (!snap.exists) {
+      console.warn('⚠️ Evento não encontrado:', id);
+      return res.status(404).json({ error: 'Evento não encontrado' });
+    }
 
     const dados = snap.data();
+    console.log('🗑️ DEBUG deletarEvento - Cidade do evento:', dados.cidadeId);
+
+    // 🔒 BLINDAGEM: Verifica se o usuário tem permissão para excluir desta cidade
+    if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
+      if (dados.cidadeId !== req.user.cidadeId) {
+        console.error('❌ Bloqueio de exclusão: cidadeId não corresponde.', {
+          userCidade: req.user.cidadeId,
+          itemCidade: dados.cidadeId
+        });
+        return res.status(403).json({ error: 'Acesso negado: Você não pode excluir eventos desta cidade.' });
+      }
+    }
+
+    // Exclusão de imagens do Storage (com tolerância a falhas)
     if (Array.isArray(dados.imagens) && bucket) {
+      console.log('🗑️ DEBUG deletarEvento - Tentando excluir imagens do Storage...');
       for (const url of dados.imagens) {
         const filePath = extractFilePath(url);
         if (filePath) {
-          try { await bucket.file(filePath).delete(); } catch (e) { /* ignora */ }
+          try {
+            await bucket.file(filePath).delete();
+          } catch (e) {
+            console.warn('⚠️ Falha ao excluir imagem do storage (ignorando):', filePath, e.message);
+          }
         }
       }
     }
 
+    console.log('🗑️ DEBUG deletarEvento - Excluindo documento do Firestore...');
     await docRef.delete();
+    console.log('✅ DEBUG deletarEvento - Exclusão concluída com sucesso!');
+    
     res.status(200).json({ message: 'Evento excluído com sucesso!' });
   } catch (error) {
-    console.error('Erro ao excluir evento:', error);
-    res.status(500).json({ error: 'Erro ao excluir evento' });
+    console.error('💥 ERRO CRÍTICO ao excluir evento:', error);
+    // 🚨 Garante que sempre retornamos JSON, mesmo em caso de crash
+    res.status(500).json({ error: 'Erro interno ao excluir evento', detalhes: error.message });
   }
 };
 
-module.exports = {
-  listarEventos,
-  buscarEvento,
-  criarEvento,
-  atualizarEvento,
-  deletarEvento
-};
+module.exports = { listarEventos, buscarEvento, criarEvento, atualizarEvento, deletarEvento };
