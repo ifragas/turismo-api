@@ -132,7 +132,6 @@ const listarItens = async (req, res) => {
 
     let query = db.collection(config.colecao);
 
-    // 🔒 BLINDAGEM: Filtra no banco baseado no usuário logado
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       console.log('✅ Filtro aplicado: cidadeId ==', req.user.cidadeId);
       query = query.where('cidadeId', '==', req.user.cidadeId);
@@ -140,7 +139,6 @@ const listarItens = async (req, res) => {
       console.log('✅ Filtro super_admin: cidadeId ==', req.query.cidadeId);
       query = query.where('cidadeId', '==', req.query.cidadeId);
     } else if (!req.user && req.query.cidadeId) {
-      // Turista pode filtrar por cidade via query param (ex: app mobile de Rolante)
       console.log('✅ Filtro público por query: cidadeId ==', req.query.cidadeId);
       query = query.where('cidadeId', '==', req.query.cidadeId);
     } else {
@@ -161,7 +159,7 @@ const listarItens = async (req, res) => {
   }
 };
 
-// 3. POST (Criar Item) - INJEÇÃO FORÇADA DE cidadeId
+// 3. POST (Criar Item) - VALIDAÇÃO RIGOROSA DE cidadeId
 const criarItem = async (req, res) => {
   let uploadedFilePaths = [];
   try {
@@ -169,8 +167,20 @@ const criarItem = async (req, res) => {
     const config = colecoesMap[tipo];
     if (!config) return res.status(400).json({ error: 'Tipo de coleção inválido' });
 
-    // 🔒 Define o cidadeId com base no usuário logado (impede spoofing pelo frontend)
-    const cidadeIdParaSalvar = (req.user.role === 'super_admin') ? (req.body.cidadeId || 'rolante') : (req.user.cidadeId || 'rolante');
+    // 🔒 VALIDAÇÃO RIGOROSA: Sem fallback hardcoded
+    let cidadeIdParaSalvar;
+    if (req.user.role === 'super_admin') {
+      cidadeIdParaSalvar = req.body.cidadeId;
+      if (!cidadeIdParaSalvar) {
+        return res.status(400).json({ error: 'Super admin deve informar o cidadeId ao cadastrar itens.' });
+      }
+    } else {
+      cidadeIdParaSalvar = req.user.cidadeId;
+      if (!cidadeIdParaSalvar) {
+        return res.status(400).json({ error: 'Usuário não possui cidade vinculada. Contate o administrador.' });
+      }
+    }
+    cidadeIdParaSalvar = String(cidadeIdParaSalvar).toLowerCase().trim();
 
     if (tipo === 'servicos') {
       const { error, value } = validarServico(req.body);
@@ -179,7 +189,7 @@ const criarItem = async (req, res) => {
       const imagensEnviadas = await enviarImagens(req.files, tipo, uploadedFilePaths);
       const dadosNovoItem = {
         ...value,
-        cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO
+        cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO SEGURA
         imagens: [...(value.imagens || []), ...imagensEnviadas],
         tipo: config.tipoNome,
         createdAt: new Date().toISOString()
@@ -250,7 +260,7 @@ const criarItem = async (req, res) => {
 
     const dadosNovoItem = {
       ...bodyToValidate,
-      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO
+      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO SEGURA
       latitude,
       longitude,
       imagem: imagensURL.length > 0 ? imagensURL[0] : '',
@@ -284,15 +294,17 @@ const atualizarItem = async (req, res) => {
     
     const dadosAntigos = docSnap.data();
 
-    // 🔒 BLINDAGEM: Verifica se o usuário tem permissão para editar esta cidade
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       if (dadosAntigos.cidadeId !== req.user.cidadeId) {
         return res.status(403).json({ error: 'Acesso negado: Você não pode editar itens desta cidade.' });
       }
     }
 
-    // Força o cidadeId a permanecer o mesmo (segurança extra)
-    const cidadeIdParaSalvar = dadosAntigos.cidadeId || (req.user.cidadeId || 'rolante');
+    // 🔒 VALIDAÇÃO RIGOROSA: Mantém a cidade original, sem fallback
+    const cidadeIdParaSalvar = dadosAntigos.cidadeId;
+    if (!cidadeIdParaSalvar) {
+      return res.status(400).json({ error: 'Documento não possui cidadeId definido. Execute a migração de dados.' });
+    }
 
     if (tipo === 'servicos') {
       const { error, value } = validarServico(req.body);
@@ -431,7 +443,6 @@ const deletarItem = async (req, res) => {
     const dados = docSnap.data();
     console.log('🗑️ DEBUG deletarItem - Cidade do item:', dados.cidadeId);
 
-    // 🔒 BLINDAGEM: Verifica se o usuário tem permissão para excluir desta cidade
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       if (dados.cidadeId !== req.user.cidadeId) {
         console.error('❌ Bloqueio de exclusão: cidadeId não corresponde.', {
@@ -442,7 +453,6 @@ const deletarItem = async (req, res) => {
       }
     }
 
-    // Exclusão de imagens do Storage (com tolerância a falhas)
     if (Array.isArray(dados.imagens) && bucket) {
       console.log('🗑️ DEBUG deletarItem - Tentando excluir imagens do Storage...');
       for (const url of dados.imagens) {
@@ -464,7 +474,6 @@ const deletarItem = async (req, res) => {
     res.status(200).json({ message: 'Item excluído com sucesso!' });
   } catch (error) {
     console.error('💥 ERRO CRÍTICO ao excluir item:', error);
-    // 🚨 Garante que sempre retornamos JSON, mesmo em caso de crash
     res.status(500).json({ error: 'Erro interno ao excluir item', detalhes: error.message });
   }
 };

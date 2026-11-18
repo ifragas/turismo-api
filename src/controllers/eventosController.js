@@ -74,7 +74,7 @@ const normalizarEvento = (body = {}) => {
     telefone: texto(body.telefone),
     whatsapp: texto(body.whatsapp),
     destaque: paraBooleano(body.destaque, false),
-    cidade: texto(body.cidade) || 'rolante'
+    cidade: texto(body.cidade) || null // 🔒 CORREÇÃO: Removido fallback 'rolante'
   };
 
   let lat = paraNumeroOpcional(body.latitude);
@@ -179,7 +179,6 @@ const listarEventos = async (req, res) => {
 
     let query = db.collection(COLECAO);
 
-    // 🔒 BLINDAGEM: Filtra no banco baseado no usuário logado
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       console.log('✅ Filtro aplicado: cidadeId ==', req.user.cidadeId);
       query = query.where('cidadeId', '==', req.user.cidadeId);
@@ -238,7 +237,6 @@ const buscarEvento = async (req, res) => {
     const snap = await db.collection(COLECAO).doc(id).get();
     if (!snap.exists) return res.status(404).json({ error: 'Evento não encontrado' });
 
-    // 🔒 BLINDAGEM: Verifica permissão de leitura
     const dados = { id: snap.id, ...snap.data() };
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       if (dados.cidadeId !== req.user.cidadeId) {
@@ -264,22 +262,34 @@ const buscarEvento = async (req, res) => {
   }
 };
 
-// ---------- 3. CRIAR - INJEÇÃO FORÇADA DE cidadeId ----------
+// ---------- 3. CRIAR - VALIDAÇÃO RIGOROSA DE cidadeId ----------
 const criarEvento = async (req, res) => {
   const uploadedFilePaths = [];
   try {
     const { error, value } = validarEvento(normalizarEvento(req.body));
     if (error) return responderErroValidacao(res, error);
 
-    // 🔒 Define o cidadeId com base no usuário logado
-    const cidadeIdParaSalvar = (req.user.role === 'super_admin') ? (req.body.cidadeId || 'rolante') : (req.user.cidadeId || 'rolante');
+    // 🔒 VALIDAÇÃO RIGOROSA: Sem fallback hardcoded
+    let cidadeIdParaSalvar;
+    if (req.user.role === 'super_admin') {
+      cidadeIdParaSalvar = req.body.cidadeId;
+      if (!cidadeIdParaSalvar) {
+        return res.status(400).json({ error: 'Super admin deve informar o cidadeId ao cadastrar eventos.' });
+      }
+    } else {
+      cidadeIdParaSalvar = req.user.cidadeId;
+      if (!cidadeIdParaSalvar) {
+        return res.status(400).json({ error: 'Usuário não possui cidade vinculada. Contate o administrador.' });
+      }
+    }
+    cidadeIdParaSalvar = String(cidadeIdParaSalvar).toLowerCase().trim();
 
     const novasUrls = await enviarImagens(req.files, uploadedFilePaths);
     const imagens = [...(value.imagens || []), ...novasUrls];
 
     const novoEvento = {
       ...value,
-      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO
+      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO SEGURA
       imagens,
       imagem: imagens[0] || '',
       createdAt: new Date().toISOString()
@@ -308,15 +318,17 @@ const atualizarEvento = async (req, res) => {
 
     const antigos = snap.data();
 
-    // 🔒 BLINDAGEM: Verifica se o usuário tem permissão para editar esta cidade
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       if (antigos.cidadeId !== req.user.cidadeId) {
         return res.status(403).json({ error: 'Acesso negado: Você não pode editar eventos desta cidade.' });
       }
     }
 
-    // Força o cidadeId a permanecer o mesmo
-    const cidadeIdParaSalvar = antigos.cidadeId || (req.user.cidadeId || 'rolante');
+    // 🔒 VALIDAÇÃO RIGOROSA: Mantém a cidade original, sem fallback
+    const cidadeIdParaSalvar = antigos.cidadeId;
+    if (!cidadeIdParaSalvar) {
+      return res.status(400).json({ error: 'Evento não possui cidadeId definido. Execute a migração de dados.' });
+    }
 
     let imagensExistentes = req.body.imagensExistentes;
     if (imagensExistentes === undefined) {
@@ -372,7 +384,6 @@ const deletarEvento = async (req, res) => {
     const dados = snap.data();
     console.log('🗑️ DEBUG deletarEvento - Cidade do evento:', dados.cidadeId);
 
-    // 🔒 BLINDAGEM: Verifica se o usuário tem permissão para excluir desta cidade
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
       if (dados.cidadeId !== req.user.cidadeId) {
         console.error('❌ Bloqueio de exclusão: cidadeId não corresponde.', {
@@ -383,7 +394,6 @@ const deletarEvento = async (req, res) => {
       }
     }
 
-    // Exclusão de imagens do Storage (com tolerância a falhas)
     if (Array.isArray(dados.imagens) && bucket) {
       console.log('🗑️ DEBUG deletarEvento - Tentando excluir imagens do Storage...');
       for (const url of dados.imagens) {
@@ -405,7 +415,6 @@ const deletarEvento = async (req, res) => {
     res.status(200).json({ message: 'Evento excluído com sucesso!' });
   } catch (error) {
     console.error('💥 ERRO CRÍTICO ao excluir evento:', error);
-    // 🚨 Garante que sempre retornamos JSON, mesmo em caso de crash
     res.status(500).json({ error: 'Erro interno ao excluir evento', detalhes: error.message });
   }
 };

@@ -2,30 +2,15 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const rateLimit = require('express-rate-limit');
 
 const turismoRoutes = require('./src/routes/turismoRoutes');
-const adminRoutes = require('./src/routes/adminRoutes'); // <-- NOVO
+const adminRoutes = require('./src/routes/adminRoutes');
 
 const app = express();
 
-// Limiter para proteger a API contra excesso de requisições
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, 
-  message: {
-    error: 'Muitas requisições criadas a partir deste IP, por favor tente novamente após 15 minutos.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Aplica o limitador globalmente
-app.use('/api/', limiter);
-
 // Middleware CORS
 app.use(cors({
-  origin: '*',
+  origin: '*', // Pode ser restrito no futuro para domínios específicos
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -37,13 +22,13 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.send(`
     <h1>🚀 API do Guia da Cidade (Refatorada MVC)</h1>
-    <p>Esta é a API REST do app de turismo de Rolante/RS.</p>
+    <p>Esta é a API REST do app de turismo Multi-Tenant.</p>
   `);
 });
 
 // Carrega as rotas da aplicação
 app.use('/api', turismoRoutes);
-app.use('/api/admin', adminRoutes); // <-- NOVO: Monta as rotas em /api/admin/...
+app.use('/api/admin', adminRoutes);
 
 // Inicia o servidor
 const PORT = process.env.PORT || 3000;

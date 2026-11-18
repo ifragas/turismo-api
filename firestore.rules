@@ -1,3 +1,7 @@
+  // ARQUITETURA: Leitura pública intencional para o App Mobile (turistas sem login).
+  // TODAS as escritas são bloqueadas (allow write: if false) e gerenciadas exclusivamente 
+  // pela API Node.js via Firebase Admin SDK, que ignora estas regras e valida o RBAC.
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
