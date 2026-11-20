@@ -6,10 +6,7 @@ const CATEGORIAS_EVENTO = [
 ];
 
 const RECORRENCIAS = ['nenhuma', 'diaria', 'semanal', 'mensal', 'anual'];
-
-const DIAS_SEMANA = [
-  'domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'
-];
+const DIAS_SEMANA = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
 
 const eventosSchema = Joi.object({
   titulo: Joi.string().trim().min(3).max(200).required().messages({
@@ -64,7 +61,7 @@ const eventosSchema = Joi.object({
   // Ingressos
   gratuito: Joi.boolean().default(true),
   preco: Joi.string().trim().max(100).allow('', null).optional(),
-  linkExterno: Joi.string().trim().allow('', null).optional(),
+  linkExterno: Joi.string().uri().allow('', null).optional(), // 🚨 Melhorado: valida se é URL real
 
   // Contato
   telefone: Joi.string().trim().allow('', null).optional(),
@@ -74,8 +71,11 @@ const eventosSchema = Joi.object({
   destaque: Joi.boolean().default(false),
   imagens: Joi.array().items(Joi.string().trim()).allow(null).optional(),
 
-  // Multi-cidade (já preparado)
-  cidade: Joi.string().trim().default('rolante')
-});
+  // 🚨 CORREÇÃO MULTI-TENANT:
+  // Permitimos que o frontend envie 'cidadeId', mas o controller é a fonte da verdade
+  // e sobrescreve este valor com base no token do usuário por segurança.
+  cidadeId: Joi.string().trim().lowercase().optional(),
+
+}).unknown(true); // 🚨 Permite campos extras sem quebrar a validação
 
 module.exports = { eventosSchema, CATEGORIAS_EVENTO, RECORRENCIAS, DIAS_SEMANA };

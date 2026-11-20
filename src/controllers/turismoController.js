@@ -9,7 +9,9 @@ const colecoesMap = {
   'servicos': { colecao: 'servicos', tipoNome: 'Serviço' }
 };
 
-// Funções Utilitárias Internas
+// ==========================================
+// UTILITÁRIOS INTERNOS
+// ==========================================
 const extractFilePath = (url) => {
   if (!url) return null;
   try {
@@ -99,7 +101,9 @@ const enviarImagens = async (files, tipo, uploadedFilePaths) => {
   return imagensURL;
 };
 
+// ==========================================
 // 1. LOGIN
+// ==========================================
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -121,28 +125,23 @@ const login = async (req, res) => {
   }
 };
 
+// ==========================================
 // 2. GET (Listar Itens) - BLINDADO POR CIDADE
+// ==========================================
 const listarItens = async (req, res) => {
   try {
     const { tipo } = req.params;
     const config = colecoesMap[tipo];
     if (!config) return res.status(400).json({ error: 'Tipo de coleção inválido' });
 
-    console.log('🔍 DEBUG listarItens - req.user:', req.user ? req.user.role : 'null (público)');
-
     let query = db.collection(config.colecao);
 
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
-      console.log('✅ Filtro aplicado: cidadeId ==', req.user.cidadeId);
       query = query.where('cidadeId', '==', req.user.cidadeId);
     } else if (req.user && req.user.role === 'super_admin' && req.query.cidadeId) {
-      console.log('✅ Filtro super_admin: cidadeId ==', req.query.cidadeId);
       query = query.where('cidadeId', '==', req.query.cidadeId);
     } else if (!req.user && req.query.cidadeId) {
-      console.log('✅ Filtro público por query: cidadeId ==', req.query.cidadeId);
       query = query.where('cidadeId', '==', req.query.cidadeId);
-    } else {
-      console.log('⚠️ Acesso Global de Administrador. Retornando tudo.');
     }
 
     const snapshot = await query.get();
@@ -159,7 +158,9 @@ const listarItens = async (req, res) => {
   }
 };
 
+// ==========================================
 // 3. POST (Criar Item) - VALIDAÇÃO RIGOROSA DE cidadeId
+// ==========================================
 const criarItem = async (req, res) => {
   let uploadedFilePaths = [];
   try {
@@ -167,7 +168,6 @@ const criarItem = async (req, res) => {
     const config = colecoesMap[tipo];
     if (!config) return res.status(400).json({ error: 'Tipo de coleção inválido' });
 
-    // 🔒 VALIDAÇÃO RIGOROSA: Sem fallback hardcoded
     let cidadeIdParaSalvar;
     if (req.user.role === 'super_admin') {
       cidadeIdParaSalvar = req.body.cidadeId;
@@ -189,7 +189,7 @@ const criarItem = async (req, res) => {
       const imagensEnviadas = await enviarImagens(req.files, tipo, uploadedFilePaths);
       const dadosNovoItem = {
         ...value,
-        cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO SEGURA
+        cidadeId: cidadeIdParaSalvar,
         imagens: [...(value.imagens || []), ...imagensEnviadas],
         tipo: config.tipoNome,
         createdAt: new Date().toISOString()
@@ -199,7 +199,6 @@ const criarItem = async (req, res) => {
       return res.status(201).json({ id: docRef.id, ...dadosNovoItem });
     }
 
-    // Processamento genérico
     let latitude = null, longitude = null;
     const coordenadasStr = req.body.coordenadas ? String(req.body.coordenadas).trim() : '';
     if (coordenadasStr) {
@@ -260,7 +259,7 @@ const criarItem = async (req, res) => {
 
     const dadosNovoItem = {
       ...bodyToValidate,
-      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO SEGURA
+      cidadeId: cidadeIdParaSalvar,
       latitude,
       longitude,
       imagem: imagensURL.length > 0 ? imagensURL[0] : '',
@@ -280,7 +279,9 @@ const criarItem = async (req, res) => {
   }
 };
 
-// 4. PUT (Atualizar Item) - VERIFICAÇÃO DE PROPRIEDADE
+// ==========================================
+// 4. PUT (Atualizar Item) - 🚨 LÓGICA CORRIGIDA PARA PERMITIR TROCA DE CIDADE
+// ==========================================
 const atualizarItem = async (req, res) => {
   let uploadedFilePaths = [];
   try {
@@ -294,16 +295,21 @@ const atualizarItem = async (req, res) => {
     
     const dadosAntigos = docSnap.data();
 
-    if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
+    // 🚨 NOVA LÓGICA: Definir cidadeIdParaSalvar
+    let cidadeIdParaSalvar;
+
+    if (req.user.role === 'super_admin') {
+      // Super admin PODE alterar a cidade do item. Usamos o que veio do form, ou mantemos o antigo se não veio.
+      cidadeIdParaSalvar = req.body.cidadeId ? String(req.body.cidadeId).toLowerCase().trim() : dadosAntigos.cidadeId;
+      if (!cidadeIdParaSalvar) {
+        return res.status(400).json({ error: 'Super admin deve informar o cidadeId ao atualizar itens.' });
+      }
+    } else {
+      // City admin/editor NÃO pode mudar a cidade. Bloqueia se tentar editar item de outra cidade.
       if (dadosAntigos.cidadeId !== req.user.cidadeId) {
         return res.status(403).json({ error: 'Acesso negado: Você não pode editar itens desta cidade.' });
       }
-    }
-
-    // 🔒 VALIDAÇÃO RIGOROSA: Mantém a cidade original, sem fallback
-    const cidadeIdParaSalvar = dadosAntigos.cidadeId;
-    if (!cidadeIdParaSalvar) {
-      return res.status(400).json({ error: 'Documento não possui cidadeId definido. Execute a migração de dados.' });
+      cidadeIdParaSalvar = dadosAntigos.cidadeId;
     }
 
     if (tipo === 'servicos') {
@@ -398,7 +404,7 @@ const atualizarItem = async (req, res) => {
     const todasImagensLimpas = cleanUrls([...imagensExistentes, ...novasImagensURL]);
     const dadosAtualizados = {
       ...bodyToValidate,
-      cidadeId: cidadeIdParaSalvar, // 🔒 MANTÉM A CIDADE ORIGINAL
+      cidadeId: cidadeIdParaSalvar, // 🔒 APLICA A NOVA CIDADE (SE SUPER ADMIN) OU MANTÉM A ANTIGA
       latitude,
       longitude,
       imagem: todasImagensLimpas.length > 0 ? todasImagensLimpas[0] : '',
@@ -418,7 +424,9 @@ const atualizarItem = async (req, res) => {
   }
 };
 
+// ==========================================
 // 5. DELETE (Excluir Item) - BLINDADO COM LOGS
+// ==========================================
 const deletarItem = async (req, res) => {
   console.log('🗑️ DEBUG deletarItem - Iniciando. Params:', req.params);
   console.log('🗑️ DEBUG deletarItem - User:', req.user ? { role: req.user.role, cidadeId: req.user.cidadeId } : 'Sem user');

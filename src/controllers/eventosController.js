@@ -10,7 +10,9 @@ const colecoesMap = {
   'servicos': 'servicos'
 };
 
-// ---------- Utilitários ----------
+// ==========================================
+// UTILITÁRIOS INTERNOS
+// ==========================================
 const extractFilePath = (url) => {
   if (!url) return null;
   try {
@@ -20,7 +22,8 @@ const extractFilePath = (url) => {
   return null;
 };
 
-const cleanFileName = (originalName) => originalName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9.]/g, '_').replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '');
+const cleanFileName = (originalName) => 
+  originalName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9.]/g, '_').replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '');
 
 const paraBooleano = (v, padrao = false) => {
   if (v === undefined || v === null || v === '') return padrao;
@@ -53,7 +56,9 @@ const normalizarObjeto = (v) => {
 
 const texto = (v) => (v === undefined || v === null) ? '' : String(v).trim();
 
-// ---------- Normalização do payload ----------
+// ==========================================
+// NORMALIZAÇÃO E VALIDAÇÃO
+// ==========================================
 const normalizarEvento = (body = {}) => {
   const payload = {
     titulo: texto(body.titulo),
@@ -74,7 +79,7 @@ const normalizarEvento = (body = {}) => {
     telefone: texto(body.telefone),
     whatsapp: texto(body.whatsapp),
     destaque: paraBooleano(body.destaque, false),
-    cidade: texto(body.cidade) || null // 🔒 CORREÇÃO: Removido fallback 'rolante'
+    cidade: texto(body.cidade) || null
   };
 
   let lat = paraNumeroOpcional(body.latitude);
@@ -107,7 +112,9 @@ const validarEvento = (payload) => {
 
 const responderErroValidacao = (res, error) => res.status(400).json({ error: 'Erro de validação', detalhes: error.details.map(d => d.message) });
 
-// ---------- Resolução do local vinculado ----------
+// ==========================================
+// RESOLUÇÃO DE LOCAIS VINCULADOS
+// ==========================================
 const criarResolvedorLocal = () => {
   const cache = new Map();
   return async (localVinculado) => {
@@ -123,9 +130,15 @@ const criarResolvedorLocal = () => {
       if (snap.exists) {
         const d = snap.data();
         dados = {
-          id: snap.id, tipo: localVinculado.tipo, nome: d.nome || '', endereco: d.endereco || '',
-          coordenadas: d.coordenadas || '', latitude: d.latitude ?? null, longitude: d.longitude ?? null,
-          imagem: d.imagem || (Array.isArray(d.imagens) ? d.imagens[0] : '') || ''
+          id: snap.id, 
+          tipo: localVinculado.tipo, 
+          nome: d.nome || '', 
+          endereco: d.endereco || '',
+          coordenadas: d.coordenadas || '', 
+          latitude: d.latitude ?? null, 
+          longitude: d.longitude ?? null,
+          imagem: d.imagem || (Array.isArray(d.imagens) ? d.imagens[0] : '') || '',
+          cidadeId: d.cidadeId || null
         };
       }
     } catch (e) { console.error('Erro ao resolver local vinculado:', e.message); }
@@ -148,7 +161,9 @@ const aplicarLocalVinculado = async (evento, resolver) => {
   };
 };
 
-// ---------- Upload de imagens ----------
+// ==========================================
+// UPLOAD E LIMPEZA DE IMAGENS
+// ==========================================
 const enviarImagens = async (files, uploadedFilePaths) => {
   const urls = [];
   if (!files?.length || !bucket) return urls;
@@ -167,7 +182,9 @@ const limparUploads = async (paths) => {
   for (const p of paths) { try { await bucket.file(p).delete(); } catch (e) { /* ignora */ } }
 };
 
-// ---------- 1. LISTAR - BLINDADO POR CIDADE ----------
+// ==========================================
+// 1. LISTAR - BLINDADO POR CIDADE
+// ==========================================
 const listarEventos = async (req, res) => {
   try {
     const incluirPassados = String(req.query.incluirPassados) === 'true';
@@ -175,21 +192,14 @@ const listarEventos = async (req, res) => {
     const categoria = req.query.categoria ? String(req.query.categoria).trim() : null;
     const agora = new Date();
 
-    console.log('🔍 DEBUG listarEventos - req.user:', req.user ? req.user.role : 'null (público)');
-
     let query = db.collection(COLECAO);
 
     if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
-      console.log('✅ Filtro aplicado: cidadeId ==', req.user.cidadeId);
       query = query.where('cidadeId', '==', req.user.cidadeId);
     } else if (req.user && req.user.role === 'super_admin' && req.query.cidadeId) {
-      console.log('✅ Filtro super_admin: cidadeId ==', req.query.cidadeId);
       query = query.where('cidadeId', '==', req.query.cidadeId);
     } else if (!req.user && req.query.cidadeId) {
-      console.log('✅ Filtro público por query: cidadeId ==', req.query.cidadeId);
       query = query.where('cidadeId', '==', req.query.cidadeId);
-    } else {
-      console.log('⚠️ Acesso Global de Administrador. Retornando tudo.');
     }
 
     const snapshot = await query.get();
@@ -230,7 +240,9 @@ const listarEventos = async (req, res) => {
   }
 };
 
-// ---------- 2. BUSCAR UM ----------
+// ==========================================
+// 2. BUSCAR UM
+// ==========================================
 const buscarEvento = async (req, res) => {
   try {
     const { id } = req.params;
@@ -262,14 +274,15 @@ const buscarEvento = async (req, res) => {
   }
 };
 
-// ---------- 3. CRIAR - VALIDAÇÃO RIGOROSA DE cidadeId ----------
+// ==========================================
+// 3. CRIAR - VALIDAÇÃO RIGOROSA DE cidadeId
+// ==========================================
 const criarEvento = async (req, res) => {
   const uploadedFilePaths = [];
   try {
     const { error, value } = validarEvento(normalizarEvento(req.body));
     if (error) return responderErroValidacao(res, error);
 
-    // 🔒 VALIDAÇÃO RIGOROSA: Sem fallback hardcoded
     let cidadeIdParaSalvar;
     if (req.user.role === 'super_admin') {
       cidadeIdParaSalvar = req.body.cidadeId;
@@ -284,12 +297,23 @@ const criarEvento = async (req, res) => {
     }
     cidadeIdParaSalvar = String(cidadeIdParaSalvar).toLowerCase().trim();
 
+    if (value.localVinculado) {
+      const resolver = criarResolvedorLocal();
+      const localInfo = await resolver(value.localVinculado);
+      if (localInfo && localInfo.cidadeId && localInfo.cidadeId !== cidadeIdParaSalvar) {
+        await limparUploads(uploadedFilePaths);
+        return res.status(400).json({ 
+          error: `O local vinculado pertence à cidade "${localInfo.cidadeId}", mas o evento está sendo criado para "${cidadeIdParaSalvar}".` 
+        });
+      }
+    }
+
     const novasUrls = await enviarImagens(req.files, uploadedFilePaths);
     const imagens = [...(value.imagens || []), ...novasUrls];
 
     const novoEvento = {
       ...value,
-      cidadeId: cidadeIdParaSalvar, // 🔒 INJEÇÃO SEGURA
+      cidadeId: cidadeIdParaSalvar,
       imagens,
       imagem: imagens[0] || '',
       createdAt: new Date().toISOString()
@@ -304,7 +328,9 @@ const criarEvento = async (req, res) => {
   }
 };
 
-// ---------- 4. ATUALIZAR - VERIFICAÇÃO DE PROPRIEDADE ----------
+// ==========================================
+// 4. ATUALIZAR - 🚨 LÓGICA CORRIGIDA PARA PERMITIR TROCA DE CIDADE
+// ==========================================
 const atualizarEvento = async (req, res) => {
   const uploadedFilePaths = [];
   try {
@@ -318,16 +344,32 @@ const atualizarEvento = async (req, res) => {
 
     const antigos = snap.data();
 
-    if (req.user && (req.user.role === 'city_admin' || req.user.role === 'editor')) {
+    // 🚨 NOVA LÓGICA: Definir cidadeIdParaSalvar
+    let cidadeIdParaSalvar;
+
+    if (req.user.role === 'super_admin') {
+      // Super admin PODE alterar a cidade do evento. Usamos o que veio do form, ou mantemos o antigo.
+      cidadeIdParaSalvar = req.body.cidadeId ? String(req.body.cidadeId).toLowerCase().trim() : antigos.cidadeId;
+      if (!cidadeIdParaSalvar) {
+        return res.status(400).json({ error: 'Super admin deve informar o cidadeId ao atualizar eventos.' });
+      }
+    } else {
+      // City admin/editor NÃO pode mudar a cidade. Bloqueia se tentar editar evento de outra cidade.
       if (antigos.cidadeId !== req.user.cidadeId) {
         return res.status(403).json({ error: 'Acesso negado: Você não pode editar eventos desta cidade.' });
       }
+      cidadeIdParaSalvar = antigos.cidadeId;
     }
 
-    // 🔒 VALIDAÇÃO RIGOROSA: Mantém a cidade original, sem fallback
-    const cidadeIdParaSalvar = antigos.cidadeId;
-    if (!cidadeIdParaSalvar) {
-      return res.status(400).json({ error: 'Evento não possui cidadeId definido. Execute a migração de dados.' });
+    if (value.localVinculado) {
+      const resolver = criarResolvedorLocal();
+      const localInfo = await resolver(value.localVinculado);
+      if (localInfo && localInfo.cidadeId && localInfo.cidadeId !== cidadeIdParaSalvar) {
+        await limparUploads(uploadedFilePaths);
+        return res.status(400).json({ 
+          error: `O local vinculado pertence à cidade "${localInfo.cidadeId}", mas o evento é da cidade "${cidadeIdParaSalvar}".` 
+        });
+      }
     }
 
     let imagensExistentes = req.body.imagensExistentes;
@@ -351,7 +393,7 @@ const atualizarEvento = async (req, res) => {
 
     const atualizado = {
       ...value,
-      cidadeId: cidadeIdParaSalvar, // 🔒 MANTÉM A CIDADE ORIGINAL
+      cidadeId: cidadeIdParaSalvar, // 🔒 APLICA A NOVA CIDADE (SE SUPER ADMIN) OU MANTÉM A ANTIGA
       imagens,
       imagem: imagens[0] || '',
       updatedAt: new Date().toISOString()
@@ -366,7 +408,9 @@ const atualizarEvento = async (req, res) => {
   }
 };
 
-// ---------- 5. EXCLUIR - BLINDADO COM LOGS ----------
+// ==========================================
+// 5. EXCLUIR - BLINDADO COM LOGS
+// ==========================================
 const deletarEvento = async (req, res) => {
   console.log('🗑️ DEBUG deletarEvento - Iniciando. Params:', req.params);
   console.log('🗑️ DEBUG deletarEvento - User:', req.user ? { role: req.user.role, cidadeId: req.user.cidadeId } : 'Sem user');

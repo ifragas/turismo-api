@@ -30,6 +30,31 @@ app.get('/', (req, res) => {
 app.use('/api', turismoRoutes);
 app.use('/api/admin', adminRoutes);
 
+// 🚨 MIDDLEWARE GLOBAL DE TRATAMENTO DE ERROS (Deve ser o último)
+app.use((err, req, res, next) => {
+  console.error('💥 Erro não tratado capturado:', err.message);
+
+  // Erro de tamanho de arquivo do Multer
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ error: 'Arquivo muito grande. O limite é 5MB por imagem.' });
+  }
+
+  // Erro de parsing de JSON (ex: frontend enviando JSON malformado)
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Formato de dados inválido.' });
+  }
+
+  // Erro genérico do Multer
+  if (err.message && err.message.includes('Unexpected field')) {
+    return res.status(400).json({ error: 'Campo de arquivo inesperado no formulário.' });
+  }
+
+  // Fallback seguro para qualquer outro erro
+  res.status(err.status || 500).json({ 
+    error: process.env.NODE_ENV === 'production' ? 'Erro interno do servidor' : err.message 
+  });
+});
+
 // Inicia o servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
