@@ -1,7 +1,8 @@
-// src/routes/turismoRoutes.js
 const router = require('express').Router();
 const controller = require('../controllers/turismoController');
 const eventosController = require('../controllers/eventosController');
+// 🚨 NOVO: Importamos o controller de cidades para usar a rota pública aqui
+const adminCidadesController = require('../controllers/adminCidadesController');
 
 const { authenticateToken, optionalAuth, requireRole } = require('../middlewares/authMiddleware');
 const upload = require('../config/multerConfig');
@@ -10,17 +11,23 @@ const upload = require('../config/multerConfig');
 router.post('/login', controller.login);
 
 // ============================================
+// ROTAS PÚBLICAS ESPECÍFICAS
+// ============================================
+// 🚨 NOVO: Rota pública para listar cidades. 
+// DEVE vir ANTES de '/:tipo', senão o Express acha que 'cidades' é um tipo de item turístico.
+router.get('/cidades', optionalAuth, adminCidadesController.getCidades);
+
+// ============================================
 // EVENTOS
 // ============================================
 router.get('/eventos', optionalAuth, eventosController.listarEventos);
 router.get('/eventos/:id', optionalAuth, eventosController.buscarEvento);
 
-// 🚨 CORREÇÃO: upload.array AGORA vem ANTES do requireRole
 router.post(
   '/eventos',
   authenticateToken,
-  upload.array('imagens', 10), // 1. Processa o FormData primeiro
-  requireRole(['super_admin', 'city_admin', 'editor'], 'cidadeId'), // 2. Agora req.body.cidadeId existe!
+  upload.array('imagens', 10),
+  requireRole(['super_admin', 'city_admin', 'editor'], 'cidadeId'),
   eventosController.criarEvento
 );
 
@@ -44,12 +51,11 @@ router.delete(
 // ============================================
 router.get('/:tipo', optionalAuth, controller.listarItens);
 
-// 🚨 CORREÇÃO: upload.array AGORA vem ANTES do requireRole
 router.post(
   '/:tipo',
   authenticateToken,
-  upload.array('imagens', 10), // 1. Processa o FormData primeiro
-  requireRole(['super_admin', 'city_admin', 'editor'], 'cidadeId'), // 2. Agora req.body.cidadeId existe!
+  upload.array('imagens', 10),
+  requireRole(['super_admin', 'city_admin', 'editor'], 'cidadeId'),
   controller.criarItem
 );
 
