@@ -4,11 +4,9 @@ const { db } = require('../config/firebase');
 
 const router = express.Router();
 
-// 🚨 Inicializa o NOVO SDK. Ele lê a variável GEMINI_API_KEY do .env automaticamente.
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// Modelo estável, rápido e com tier gratuito generoso
-const MODEL_NAME = 'gemini-1.5-flash';
+// Inicializa o novo SDK (ele lê GEMINI_API_KEY automaticamente do process.env)
+const ai = new GoogleGenAI();
+const MODEL_NAME = 'gemini-2.5-flash';
 
 const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
 
@@ -25,13 +23,10 @@ router.post('/chat', async (req, res) => {
   try {
     const { pergunta, cidadeId } = req.body;
 
-    console.log('🔍 Recebido no backend:', { pergunta, cidadeId });
-
     if (!pergunta || !cidadeId) {
       return res.status(400).json({ error: 'pergunta e cidadeId são obrigatórios' });
     }
 
-    // 🚨 PASSO 1: Buscar locais relevantes da cidade no Firestore
     const colecoes = ['pontosTuristicos', 'restaurantes', 'acomodacoes', 'servicos', 'eventos'];
     const locaisRelevantes = [];
 
@@ -64,7 +59,6 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    // 🚨 PASSO 2: Montar o contexto para o usuário
     const contextoLocais = locaisRelevantes
       .map((l, i) => `${i + 1}. ${l.nome} (${l.tipo}${l.tipoServico ? ' - ' + l.tipoServico : ''}) | ${l.endereco} | ${l.descricao}`)
       .join('\n');
@@ -78,26 +72,23 @@ PERGUNTA DO USUÁRIO: "${pergunta}"
 
 Responda de forma natural e útil. Se mencionar locais específicos, liste-os claramente.`;
 
-    // 🚨 PASSO 3: Chamar a IA com o NOVO SDK e systemInstruction
     console.log(`🤖 Chamando a IA com o modelo: ${MODEL_NAME}...`);
-    
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: promptUsuario,
       config: {
-        systemInstruction: SYSTEM_PROMPT, // 🚨 Regras aplicadas de forma nativa e blindada
+        systemInstruction: SYSTEM_PROMPT,
         temperature: 0.7,
-        maxOutputTokens: 1500, // Aumentado para evitar cortes em respostas mais longas
+        maxOutputTokens: 800,
       },
     });
 
     const respostaIA = response.text;
     console.log('✅ IA respondeu com sucesso!');
 
-    // 🚨 PASSO 4: Extrair locais mencionados para linkar no mapa
-    const locaisMencionados = locaisRelevantes.filter(l =>
-      respostaIA.toLowerCase().includes((l.nome || '').toLowerCase())
-    ).slice(0, 3);
+    const locaisMencionados = locaisRelevantes
+      .filter(l => respostaIA.toLowerCase().includes((l.nome || '').toLowerCase()))
+      .slice(0, 3);
 
     res.json({
       resposta: respostaIA,
