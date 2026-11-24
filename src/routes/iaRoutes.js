@@ -4,57 +4,12 @@ const { db } = require('../config/firebase');
 
 const router = express.Router();
 
+// Inicializa a API com a chave do .env
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 🚨 Lista de modelos em ordem de preferência.
-// Tenta o moderno (flash) e cai para o legado (pro) se a API não reconhecer.
-const MODELOS_CANDIDATOS = ['gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-pro'];
-
-// Seleciona o modelo em memória (evita re-testar a cada requisição)
-let modeloSelecionado = null;
-
-async function obterModelo() {
-  if (modeloSelecionado) return modeloSelecionado;
-  for (const nome of MODELOS_CANDIDATOS) {
-    try {
-      const m = genAI.getGenerativeModel({ model: nome });
-      // Teste leve: só tenta instanciar. O 404 real aparece no generateContent.
-      // Guardamos e usamos; se falhar no generateContent, tentamos o próximo.
-      modeloSelecionado = { nome, model: m };
-      return modeloSelecionado;
-    } catch (e) {
-      continue;
-    }
-  }
-  throw new Error('Nenhum modelo Gemini disponível.');
-}
-
-// 🚨 Chama a IA com fallback automático de modelo em caso de erro 404
-async function gerarResposta(promptCompleto) {
-  let ultimoErro = null;
-  for (const nome of MODELOS_CANDIDATOS) {
-    try {
-      const model = genAI.getGenerativeModel({ model: nome });
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: promptCompleto }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
-      });
-      console.log(`✅ IA respondeu usando o modelo: ${nome}`);
-      return result.response.text();
-    } catch (error) {
-      ultimoErro = error;
-      const status = error?.status;
-      // Se for 404 (modelo não encontrado), tenta o próximo da lista
-      if (status === 404) {
-        console.warn(`⚠️ Modelo ${nome} indisponível (404). Tentando próximo...`);
-        continue;
-      }
-      // Qualquer outro erro (rate limit, auth, etc.) para o loop e propaga
-      throw error;
-    }
-  }
-  throw ultimoErro;
-}
+// 🚨 Modelo mais estável e gratuito atualmente no Google AI Studio
+const MODEL_NAME = 'gemini-1.5-flash-latest';
+const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
 const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
 
@@ -130,8 +85,18 @@ PERGUNTA DO USUÁRIO: "${pergunta}"
 
 Responda de forma natural e útil. Se mencionar locais específicos, liste-os claramente.`;
 
-    // 🚨 PASSO 3: Chamar a IA com fallback de modelo
-    const respostaIA = await gerarResposta(promptCompleto);
+    // 🚨 PASSO 3: Chamar a IA
+    console.log(`🤖 Chamando a IA com o modelo: ${MODEL_NAME}...`);
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: promptCompleto }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 800,
+      },
+    });
+
+    const respostaIA = result.response.text();
+    console.log('✅ IA respondeu com sucesso!');
 
     // 🚨 PASSO 4: Extrair locais mencionados para linkar no mapa
     const locaisMencionados = locaisRelevantes.filter(l =>
@@ -148,7 +113,7 @@ Responda de forma natural e útil. Se mencionar locais específicos, liste-os cl
     });
 
   } catch (error) {
-    console.error('Erro no chat IA:', error);
+    console.error('❌ Erro no chat IA:', error.message);
     res.status(500).json({ error: 'Erro ao processar sua pergunta. Tente novamente.' });
   }
 });
