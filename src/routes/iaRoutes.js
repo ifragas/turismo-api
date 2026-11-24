@@ -4,9 +4,12 @@ const { db } = require('../config/firebase');
 
 const router = express.Router();
 
-// Inicializa o novo SDK (lê GEMINI_API_KEY automaticamente do process.env)
+// Lê GEMINI_API_KEY automaticamente das variáveis de ambiente
 const ai = new GoogleGenAI();
-const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+
+// Lê os modelos do .env (ou Environment do Render)
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.8-flash';
 
 const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
 
@@ -18,6 +21,55 @@ REGRAS OBRIGATÓRIAS:
 5. Quando mencionar um local específico, inclua o nome exato como está nos dados.
 6. Se o usuário pedir recomendações, considere a categoria, descrição e endereço dos locais para dar sugestões relevantes.
 7. Mantenha um tom caloroso, como um morador local que adora mostrar sua cidade.`;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTransientError(error) {
+  const status = error?.status || error?.code;
+  const msg = String(error?.message || '');
+  return (
+    status === 503 ||
+    status === 429 ||
+    status === 404 ||
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('404') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('high demand')
+  );
+}
+
+async function generateWithFallback(promptUsuario, maxRetries = 2) {
+  const modelos = [...new Set([PRIMARY_MODEL, FALLBACK_MODEL].filter(Boolean))];
+
+  for (const modelo of modelos) {
+    for (let tentativa = 1; tentativa <= maxRetries; tentativa++) {
+      try {
+        console.log(`🤖 Chamando IA (${modelo}) - tentativa ${tentativa}/${maxRetries}...`);
+        return await ai.models.generateContent({
+          model: modelo,
+          contents: promptUsuario,
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            temperature: 0.7,
+            maxOutputTokens: 1200,
+          },
+        });
+      } catch (err) {
+        const ehUltimoModelo = modelo === modelos[modelos.length - 1];
+        const podeTentarDeNovo = isTransientError(err) && tentativa < maxRetries;
+        console.warn(`⚠️ Falha em ${modelo} (tentativa ${tentativa}): ${err.message}`);
+
+        if (!podeTentarDeNovo) {
+          if (ehUltimoModelo) throw err;
+          break; // Passa imediatamente para o FALLBACK_MODEL
+        }
+
+        await sleep(500 * tentativa);
+      }
+    }
+  }
+}
 
 router.post('/chat', async (req, res) => {
   try {
@@ -39,7 +91,7 @@ router.post('/chat', async (req, res) => {
           .limit(5)
           .get();
 
-        snapshot.forEach(doc => {
+        snapshot.forEach((doc) => {
           const data = doc.data();
           const nome = (data.nome || data.titulo || '').trim();
 
@@ -90,27 +142,17 @@ PERGUNTA DO USUÁRIO: "${pergunta}"
 
 Responda de forma natural e útil. Se mencionar locais específicos, liste-os claramente.`;
 
-    console.log(`🤖 Chamando a IA com o modelo: ${MODEL_NAME}...`);
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: promptUsuario,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        temperature: 0.7,
-        maxOutputTokens: 1200,
-      },
-    });
-
+    const response = await generateWithFallback(promptUsuario, 2);
     const respostaIA = (response.text || '').trim();
     console.log('✅ IA respondeu com sucesso!');
 
     const locaisMencionados = locaisRelevantes
-      .filter(l => respostaIA.toLowerCase().includes(l.nome.toLowerCase()))
+      .filter((l) => respostaIA.toLowerCase().includes(l.nome.toLowerCase()))
       .slice(0, 3);
 
     res.json({
       resposta: respostaIA,
-      locaisMencionados: locaisMencionados.map(l => ({
+      locaisMencionados: locaisMencionados.map((l) => ({
         nome: l.nome,
         tipo: l.tipo,
         endereco: l.endereco,
@@ -118,6 +160,13 @@ Responda de forma natural e útil. Se mencionar locais específicos, liste-os cl
     });
   } catch (error) {
     console.error('❌ Erro no chat IA:', error.message);
+
+    if (isTransientError(error)) {
+      return res.status(503).json({
+        error: 'O assistente está com alta demanda no momento. Tente novamente em alguns segundos.',
+      });
+    }
+
     res.status(500).json({ error: 'Erro ao processar sua pergunta. Tente novamente.' });
   }
 });
