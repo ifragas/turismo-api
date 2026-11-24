@@ -1,15 +1,14 @@
 const express = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { db } = require('../config/firebase');
 
 const router = express.Router();
 
-// Inicializa a API com a chave do .env
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// 🚨 Inicializa o NOVO SDK. Ele lê a variável GEMINI_API_KEY do .env automaticamente.
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// 🚨 Modelo mais estável e gratuito atualmente no Google AI Studio
-const MODEL_NAME = 'gemini-1.5-flash-latest';
-const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+// Modelo estável, rápido e com tier gratuito generoso
+const MODEL_NAME = 'gemini-1.5-flash';
 
 const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
 
@@ -51,10 +50,6 @@ router.post('/chat', async (req, res) => {
             tipoServico: data.tipoServico || null,
             endereco: data.endereco || '',
             descricao: (data.descricao || '').substring(0, 200),
-            horario: data.horario || (data.funcionamento24h ? '24 horas' : ''),
-            telefone: data.telefone || '',
-            gratuito: data.gratuito || false,
-            preco: data.preco || '',
           });
         });
       } catch (e) {
@@ -69,14 +64,12 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    // 🚨 PASSO 2: Montar o prompt com contexto
+    // 🚨 PASSO 2: Montar o contexto para o usuário
     const contextoLocais = locaisRelevantes
       .map((l, i) => `${i + 1}. ${l.nome} (${l.tipo}${l.tipoServico ? ' - ' + l.tipoServico : ''}) | ${l.endereco} | ${l.descricao}`)
       .join('\n');
 
-    const promptCompleto = `${SYSTEM_PROMPT}
-
-CIDADE ATUAL: ${cidadeId}
+    const promptUsuario = `CIDADE ATUAL: ${cidadeId}
 
 LOCAIS DISPONÍVEIS NO BANCO DE DADOS:
 ${contextoLocais}
@@ -85,17 +78,20 @@ PERGUNTA DO USUÁRIO: "${pergunta}"
 
 Responda de forma natural e útil. Se mencionar locais específicos, liste-os claramente.`;
 
-    // 🚨 PASSO 3: Chamar a IA
+    // 🚨 PASSO 3: Chamar a IA com o NOVO SDK e systemInstruction
     console.log(`🤖 Chamando a IA com o modelo: ${MODEL_NAME}...`);
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: promptCompleto }] }],
-      generationConfig: {
+    
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: promptUsuario,
+      config: {
+        systemInstruction: SYSTEM_PROMPT, // 🚨 Regras aplicadas de forma nativa e blindada
         temperature: 0.7,
-        maxOutputTokens: 800,
+        maxOutputTokens: 1500, // Aumentado para evitar cortes em respostas mais longas
       },
     });
 
-    const respostaIA = result.response.text();
+    const respostaIA = response.text;
     console.log('✅ IA respondeu com sucesso!');
 
     // 🚨 PASSO 4: Extrair locais mencionados para linkar no mapa
