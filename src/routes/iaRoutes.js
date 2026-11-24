@@ -1,25 +1,81 @@
 const express = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { db } = require('../config/firebase');
 
 const router = express.Router();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const MODEL_NAME = 'gemini-1.5-flash';
-const model = genAI.getGenerativeModel({ 
-  model: MODEL_NAME,
-  systemInstruction: `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
+// Inicializa o SDK (lê GEMINI_API_KEY automaticamente das variáveis de ambiente)
+const ai = new GoogleGenAI();
+
+// Lê os modelos do .env (ou das variáveis de ambiente no Render)
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.8-flash';
+
+const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
 
 REGRAS OBRIGATÓRIAS:
 1. Responda SEMPRE em português brasileiro, de forma natural e conversacional.
 2. Baseie suas respostas APENAS nos dados de locais fornecidos abaixo. Não invente estabelecimentos, endereços ou informações.
 3. Se o usuário perguntar algo que não está nos dados, diga honestamente que não tem essa informação no momento, mas sugira alternativas dos locais disponíveis.
-4. Seja conciso mas útil. Destaque no máximo 5 locais por resposta.
-5. Quando mencionar um local específico, use o nome EXATO como está nos dados fornecidos.
-6. Mantenha um tom caloroso, como um morador local que adora mostrar sua cidade.`
-});
+4. Seja conciso mas útil. Evite listas longas demais — destaque no máximo 3-5 locais por resposta.
+5. Quando mencionar um local específico, inclua o nome exato como está nos dados.
+6. Se o usuário pedir recomendações, considere a categoria, descrição e endereço dos locais para dar sugestões relevantes.
+7. Mantenha um tom caloroso, como um morador local que adora mostrar sua cidade.`;
 
-// 🚨 Função para normalizar texto (remove acentos e deixa minúsculo)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTransientError(error) {
+  const status = error?.status || error?.code;
+  const msg = String(error?.message || '');
+  return (
+    status === 503 ||
+    status === 429 ||
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('high demand')
+  );
+}
+
+function isModelNotFoundError(error) {
+  const status = error?.status || error?.code;
+  const msg = String(error?.message || '');
+  return status === 404 || msg.includes('404') || msg.includes('NOT_FOUND');
+}
+
+async function generateWithFallback(promptUsuario, maxRetries = 2) {
+  const modelos = [...new Set([PRIMARY_MODEL, FALLBACK_MODEL].filter(Boolean))];
+
+  for (const modelo of modelos) {
+    for (let tentativa = 1; tentativa <= maxRetries; tentativa++) {
+      try {
+        console.log(`🤖 Chamando IA (${modelo}) - tentativa ${tentativa}/${maxRetries}...`);
+        return await ai.models.generateContent({
+          model: modelo,
+          contents: promptUsuario,
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            temperature: 0.7,
+            maxOutputTokens: 1200,
+          },
+        });
+      } catch (err) {
+        const ehUltimoModelo = modelo === modelos[modelos.length - 1];
+        const podeTentarDeNovo = isTransientError(err) && tentativa < maxRetries;
+        console.warn(`⚠️ Falha em ${modelo} (tentativa ${tentativa}): ${err.message}`);
+
+        if (isModelNotFoundError(err) || !podeTentarDeNovo) {
+          if (ehUltimoModelo) throw err;
+          break;
+        }
+
+        await sleep(500 * tentativa);
+      }
+    }
+  }
+}
+
+// 🚨 CORREÇÃO 1: Função para normalizar texto (remove acentos e deixa minúsculo)
 const normalizarTexto = (str) => {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 };
@@ -41,16 +97,17 @@ router.post('/chat', async (req, res) => {
       try {
         const snapshot = await db.collection(colecao)
           .where('cidadeId', '==', cidadeId)
-          .limit(10) // Aumentado para 10 para dar mais opções à IA
+          .limit(10) // Aumentado levemente para dar mais opções à IA
           .get();
 
-        snapshot.forEach(doc => {
+        snapshot.forEach((doc) => {
           const data = doc.data();
           const nome = (data.nome || data.titulo || '').trim();
+
           if (!nome) return;
 
           locaisRelevantes.push({
-            id: doc.id,
+            id: doc.id, // 🚨 CORREÇÃO 2: Adicionado o ID do documento para o clique funcionar
             nome,
             tipo: data.tipo || colecao,
             tipoServico: data.tipoServico || null,
@@ -79,8 +136,10 @@ router.post('/chat', async (req, res) => {
         const extras = [
           l.horario ? `Horário: ${l.horario}` : '',
           l.preco ? `Preço: ${l.preco}` : (l.gratuito ? 'Gratuito' : ''),
+          l.telefone ? `Tel: ${l.telefone}` : '',
         ].filter(Boolean).join(' | ');
-        return `${i + 1}. ${l.nome} (${l.tipo}) | ${l.endereco} | ${l.descricao}${extras ? ' | ' + extras : ''}`;
+
+        return `${i + 1}. ${l.nome} (${l.tipo}${l.tipoServico ? ' - ' + l.tipoServico : ''}) | ${l.endereco} | ${l.descricao}${extras ? ' | ' + extras : ''}`;
       })
       .join('\n');
 
@@ -91,28 +150,23 @@ ${contextoLocais}
 
 PERGUNTA DO USUÁRIO: "${pergunta}"
 
-Responda de forma natural. Use os nomes EXATOS dos locais quando mencioná-los.`;
+Responda de forma natural e útil. Se mencionar locais específicos, liste-os claramente.`;
 
-    console.log(`🤖 Chamando a IA com o modelo: ${MODEL_NAME}...`);
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: promptUsuario }] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
-    });
-
-    const respostaIA = (result.response.text() || '').trim();
+    const response = await generateWithFallback(promptUsuario, 2);
+    const respostaIA = (response.text || '').trim();
     console.log('✅ IA respondeu com sucesso!');
 
-    // 🚨 FILTRO ROBUSTO: Compara textos normalizados (sem acentos)
+    // 🚨 CORREÇÃO 3: Filtro robusto comparando textos normalizados (sem acentos)
     const respostaNormalizada = normalizarTexto(respostaIA);
     
     const locaisMencionados = locaisRelevantes
-      .filter(l => {
+      .filter((l) => {
         const nomeNormalizado = normalizarTexto(l.nome);
         return respostaNormalizada.includes(nomeNormalizado);
       })
-      .slice(0, 5) // Limita a 5 locais mencionados
-      .map(l => ({
-        id: l.id,
+      .slice(0, 5) // 🚨 CORREÇÃO 4: Aumentado de 3 para 5 para corresponder ao prompt da IA
+      .map((l) => ({
+        id: l.id, // 🚨 CORREÇÃO 5: Garantindo que o ID vá para o frontend
         nome: l.nome,
         tipo: l.tipo,
         endereco: l.endereco,
@@ -124,9 +178,15 @@ Responda de forma natural. Use os nomes EXATOS dos locais quando mencioná-los.`
       resposta: respostaIA,
       locaisMencionados,
     });
-
   } catch (error) {
     console.error('❌ Erro no chat IA:', error.message);
+
+    if (isTransientError(error)) {
+      return res.status(503).json({
+        error: 'O assistente está com alta demanda no momento. Tente novamente em alguns segundos.',
+      });
+    }
+
     res.status(500).json({ error: 'Erro ao processar sua pergunta. Tente novamente.' });
   }
 });
