@@ -14,11 +14,15 @@ REGRAS OBRIGATÓRIAS:
 1. Responda SEMPRE em português brasileiro, de forma natural e conversacional.
 2. Baseie suas respostas APENAS nos dados de locais fornecidos abaixo. Não invente estabelecimentos, endereços ou informações.
 3. Se o usuário perguntar algo que não está nos dados, diga honestamente que não tem essa informação no momento, mas sugira alternativas dos locais disponíveis.
-4. Seja conciso mas útil. Evite listas longas demais — destaque no máximo 3-5 locais por resposta.
-5. Quando mencionar um local específico, inclua o nome exato como está nos dados.
-6. Se o usuário pedir recomendações, considere a categoria, descrição e endereço dos locais para dar sugestões relevantes.
-7. Mantenha um tom caloroso, como um morador local que adora mostrar sua cidade.`
+4. Seja conciso mas útil. Destaque no máximo 5 locais por resposta.
+5. Quando mencionar um local específico, use o nome EXATO como está nos dados fornecidos.
+6. Mantenha um tom caloroso, como um morador local que adora mostrar sua cidade.`
 });
+
+// 🚨 Função para normalizar texto (remove acentos e deixa minúsculo)
+const normalizarTexto = (str) => {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+};
 
 router.post('/chat', async (req, res) => {
   try {
@@ -37,7 +41,7 @@ router.post('/chat', async (req, res) => {
       try {
         const snapshot = await db.collection(colecao)
           .where('cidadeId', '==', cidadeId)
-          .limit(8)
+          .limit(10) // Aumentado para 10 para dar mais opções à IA
           .get();
 
         snapshot.forEach(doc => {
@@ -46,7 +50,7 @@ router.post('/chat', async (req, res) => {
           if (!nome) return;
 
           locaisRelevantes.push({
-            id: doc.id, // 🚨 ADICIONADO: ID do documento para permitir navegação no frontend
+            id: doc.id,
             nome,
             tipo: data.tipo || colecao,
             tipoServico: data.tipoServico || null,
@@ -75,10 +79,8 @@ router.post('/chat', async (req, res) => {
         const extras = [
           l.horario ? `Horário: ${l.horario}` : '',
           l.preco ? `Preço: ${l.preco}` : (l.gratuito ? 'Gratuito' : ''),
-          l.telefone ? `Tel: ${l.telefone}` : '',
         ].filter(Boolean).join(' | ');
-
-        return `${i + 1}. ${l.nome} (${l.tipo}${l.tipoServico ? ' - ' + l.tipoServico : ''}) | ${l.endereco} | ${l.descricao}${extras ? ' | ' + extras : ''}`;
+        return `${i + 1}. ${l.nome} (${l.tipo}) | ${l.endereco} | ${l.descricao}${extras ? ' | ' + extras : ''}`;
       })
       .join('\n');
 
@@ -89,30 +91,34 @@ ${contextoLocais}
 
 PERGUNTA DO USUÁRIO: "${pergunta}"
 
-Responda de forma natural e útil. Se mencionar locais específicos, liste-os claramente.`;
+Responda de forma natural. Use os nomes EXATOS dos locais quando mencioná-los.`;
 
     console.log(`🤖 Chamando a IA com o modelo: ${MODEL_NAME}...`);
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: promptUsuario }] }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 1200,
-      },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
     });
 
     const respostaIA = (result.response.text() || '').trim();
     console.log('✅ IA respondeu com sucesso!');
 
-    // 🚨 ALTERADO: Aumentado para 5 e mapeado para incluir o ID
+    // 🚨 FILTRO ROBUSTO: Compara textos normalizados (sem acentos)
+    const respostaNormalizada = normalizarTexto(respostaIA);
+    
     const locaisMencionados = locaisRelevantes
-      .filter(l => respostaIA.toLowerCase().includes(l.nome.toLowerCase()))
-      .slice(0, 5) 
+      .filter(l => {
+        const nomeNormalizado = normalizarTexto(l.nome);
+        return respostaNormalizada.includes(nomeNormalizado);
+      })
+      .slice(0, 5) // Limita a 5 locais mencionados
       .map(l => ({
         id: l.id,
         nome: l.nome,
         tipo: l.tipo,
         endereco: l.endereco,
       }));
+
+    console.log(`📍 Locais vinculados à resposta: ${locaisMencionados.length}`, locaisMencionados.map(l => l.nome));
 
     res.json({
       resposta: respostaIA,
