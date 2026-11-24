@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const turismoRoutes = require('./src/routes/turismoRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
+const iaRoutes = require('./src/routes/iaRoutes');
 
 const app = express();
 
@@ -29,6 +30,8 @@ app.get('/', (req, res) => {
 // Carrega as rotas da aplicação
 app.use('/api', turismoRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/ia', iaRoutes);
+
 
 // 🚨 MIDDLEWARE GLOBAL DE TRATAMENTO DE ERROS (Deve ser o último)
 app.use((err, req, res, next) => {
