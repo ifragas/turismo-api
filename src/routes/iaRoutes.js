@@ -4,9 +4,9 @@ const { db } = require('../config/firebase');
 
 const router = express.Router();
 
-// Inicializa o novo SDK (ele lê GEMINI_API_KEY automaticamente do process.env)
+// Inicializa o novo SDK (lê GEMINI_API_KEY automaticamente do process.env)
 const ai = new GoogleGenAI();
-const MODEL_NAME = 'gemini-2.5-flash';
+const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
 const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
 
@@ -23,6 +23,8 @@ router.post('/chat', async (req, res) => {
   try {
     const { pergunta, cidadeId } = req.body;
 
+    console.log('🔍 Recebido no backend:', { pergunta, cidadeId });
+
     if (!pergunta || !cidadeId) {
       return res.status(400).json({ error: 'pergunta e cidadeId são obrigatórios' });
     }
@@ -34,17 +36,25 @@ router.post('/chat', async (req, res) => {
       try {
         const snapshot = await db.collection(colecao)
           .where('cidadeId', '==', cidadeId)
-          .limit(8)
+          .limit(5)
           .get();
 
         snapshot.forEach(doc => {
           const data = doc.data();
+          const nome = (data.nome || data.titulo || '').trim();
+
+          if (!nome) return;
+
           locaisRelevantes.push({
-            nome: data.nome || data.titulo,
+            nome,
             tipo: data.tipo || colecao,
             tipoServico: data.tipoServico || null,
             endereco: data.endereco || '',
             descricao: (data.descricao || '').substring(0, 200),
+            horario: data.horario || (data.funcionamento24h ? '24 horas' : ''),
+            telefone: data.telefone || '',
+            gratuito: data.gratuito || false,
+            preco: data.preco || '',
           });
         });
       } catch (e) {
@@ -54,13 +64,21 @@ router.post('/chat', async (req, res) => {
 
     if (locaisRelevantes.length === 0) {
       return res.json({
-        resposta: `Ainda não temos locais cadastrados para esta cidade no momento. Tente novamente mais tarde!`,
+        resposta: 'Ainda não temos locais cadastrados para esta cidade no momento. Tente novamente mais tarde!',
         locaisMencionados: [],
       });
     }
 
     const contextoLocais = locaisRelevantes
-      .map((l, i) => `${i + 1}. ${l.nome} (${l.tipo}${l.tipoServico ? ' - ' + l.tipoServico : ''}) | ${l.endereco} | ${l.descricao}`)
+      .map((l, i) => {
+        const extras = [
+          l.horario ? `Horário: ${l.horario}` : '',
+          l.preco ? `Preço: ${l.preco}` : (l.gratuito ? 'Gratuito' : ''),
+          l.telefone ? `Tel: ${l.telefone}` : '',
+        ].filter(Boolean).join(' | ');
+
+        return `${i + 1}. ${l.nome} (${l.tipo}${l.tipoServico ? ' - ' + l.tipoServico : ''}) | ${l.endereco} | ${l.descricao}${extras ? ' | ' + extras : ''}`;
+      })
       .join('\n');
 
     const promptUsuario = `CIDADE ATUAL: ${cidadeId}
@@ -79,15 +97,15 @@ Responda de forma natural e útil. Se mencionar locais específicos, liste-os cl
       config: {
         systemInstruction: SYSTEM_PROMPT,
         temperature: 0.7,
-        maxOutputTokens: 800,
+        maxOutputTokens: 1200,
       },
     });
 
-    const respostaIA = response.text;
+    const respostaIA = (response.text || '').trim();
     console.log('✅ IA respondeu com sucesso!');
 
     const locaisMencionados = locaisRelevantes
-      .filter(l => respostaIA.toLowerCase().includes((l.nome || '').toLowerCase()))
+      .filter(l => respostaIA.toLowerCase().includes(l.nome.toLowerCase()))
       .slice(0, 3);
 
     res.json({
@@ -98,7 +116,6 @@ Responda de forma natural e útil. Se mencionar locais específicos, liste-os cl
         endereco: l.endereco,
       })),
     });
-
   } catch (error) {
     console.error('❌ Erro no chat IA:', error.message);
     res.status(500).json({ error: 'Erro ao processar sua pergunta. Tente novamente.' });
