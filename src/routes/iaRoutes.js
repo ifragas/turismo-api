@@ -4,11 +4,11 @@ const { db } = require('../config/firebase');
 
 const router = express.Router();
 
-// Lê GEMINI_API_KEY automaticamente das variáveis de ambiente
+// Inicializa o SDK (lê GEMINI_API_KEY automaticamente das variáveis de ambiente)
 const ai = new GoogleGenAI();
 
-// Lê os modelos do .env (ou Environment do Render)
-const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+// Lê os modelos do .env (ou das variáveis de ambiente no Render)
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.8-flash';
 
 const SYSTEM_PROMPT = `Você é o "Guia Smart", um assistente virtual amigável, prestativo e especialista em turismo da cidade informada pelo usuário.
@@ -30,13 +30,17 @@ function isTransientError(error) {
   return (
     status === 503 ||
     status === 429 ||
-    status === 404 ||
     msg.includes('503') ||
     msg.includes('429') ||
-    msg.includes('404') ||
     msg.includes('UNAVAILABLE') ||
     msg.includes('high demand')
   );
+}
+
+function isModelNotFoundError(error) {
+  const status = error?.status || error?.code;
+  const msg = String(error?.message || '');
+  return status === 404 || msg.includes('404') || msg.includes('NOT_FOUND');
 }
 
 async function generateWithFallback(promptUsuario, maxRetries = 2) {
@@ -60,9 +64,10 @@ async function generateWithFallback(promptUsuario, maxRetries = 2) {
         const podeTentarDeNovo = isTransientError(err) && tentativa < maxRetries;
         console.warn(`⚠️ Falha em ${modelo} (tentativa ${tentativa}): ${err.message}`);
 
-        if (!podeTentarDeNovo) {
+        // Se o modelo não existir (404) ou acabarem as tentativas, vai direto para o próximo modelo
+        if (isModelNotFoundError(err) || !podeTentarDeNovo) {
           if (ehUltimoModelo) throw err;
-          break; // Passa imediatamente para o FALLBACK_MODEL
+          break;
         }
 
         await sleep(500 * tentativa);
